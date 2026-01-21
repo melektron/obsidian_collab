@@ -14,131 +14,97 @@ import * as cm_view from '@codemirror/view' // eslint-disable-line
 import { YRange } from './y-range.js'
 import { Awareness } from 'y-protocols/awareness.js';
 
+// TODO: use this to determine the path of a document opened in an editor
+import { editorInfoField, Notice, TFile } from 'obsidian';
+import { ItemResolver, itemResolverFacet, TextItem } from 'src/item_resolver.js';
+import { ErrorNotice } from 'src/components.js';
 
-export class YSyncConfig {
+
+export const ySyncAnnotation = cm_state.Annotation.define()
+
+
+class YSyncPluginValue implements cm_view.PluginValue{
+    editor: cm_view.EditorView;
+    file: TFile;
+    resolver: ItemResolver;
+    item: TextItem | null;
     ytext: Y.Text;
-    awareness: Awareness;
-    undoManager: Y.UndoManager;
+    observer
 
-    constructor(ytext: Y.Text, awareness: Awareness) {
-        this.ytext = ytext
-        this.awareness = awareness
-        this.undoManager = new Y.UndoManager(ytext)
-    }
-
-    /**
-     * Helper function to transform an absolute index position to a Yjs-based relative position
-     * (https://docs.yjs.dev/api/relative-positions).
-     *
-     * A relative position can be transformed back to an absolute position even after the document has changed. The position is
-     * automatically adapted. This does not require any position transformations. Relative positions are computed based on
-     * the internal Yjs document model. Peers that share content through Yjs are guaranteed that their positions will always
-     * synced up when using relatve positions.
-     *
-     * ```js
-     * import { ySyncFacet } from 'y-codemirror'
-     *
-     * ..
-     * const ysync = view.state.facet(ySyncFacet)
-     * // transform an absolute index position to a ypos
-     * const ypos = ysync.getYPos(3)
-     * // transform the ypos back to an absolute position
-     * ysync.fromYPos(ypos) // => 3
-     * ```
-     *
-     * It cannot be guaranteed that absolute index positions can be synced up between peers.
-     * This might lead to undesired behavior when implementing features that require that all peers see the
-     * same marked range (e.g. a comment plugin).
-     *
-     */
-    toYPos(pos: number, assoc: number = 0) {
-        return Y.createRelativePositionFromTypeIndex(this.ytext, pos, assoc)
-    }
-
-    fromYPos(rpos: Y.RelativePosition) {
-        const pos = Y.createAbsolutePositionFromRelativePosition(Y.createRelativePositionFromJSON(rpos), this.ytext.doc!)
-        if (pos == null || pos.type !== this.ytext) {
-            throw new Error('[y-codemirror] The position you want to retrieve was created by a different document')
+    constructor(editor: cm_view.EditorView) {
+        this.editor = editor
+        this.resolver = editor.state.facet(itemResolverFacet)
+        
+        let editorInfo = this.editor.state.field(editorInfoField);
+        if (editorInfo.file) {
+            this.file = editorInfo.file;
+        } else {
+            new ErrorNotice("Collab could not determine which file was opened. This editor will not be synced.");
+            throw Error("getActiveFile() failed");
         }
-        return {
-            pos: pos.index,
-            assoc: pos.assoc
+        
+        this.item = this.resolver.resolveTextItem(this.file.path)
+        if (this.item) {
+            this.ytext = this.item.textType;
+            new Notice("Associated with item");
+        } else {
+            new ErrorNotice("Not associated with any item");
+            throw Error("resolveTextItem() failed");
         }
-    }
 
-    toYRange(range: cm_state.SelectionRange) {
-        const assoc = range.assoc
-        const yanchor = this.toYPos(range.anchor, assoc)
-        const yhead = this.toYPos(range.head, assoc)
-        return new YRange(yanchor, yhead)
-    }
-
-    fromYRange(yrange: YRange) {
-        const anchor = this.fromYPos(yrange.yanchor)
-        const head = this.fromYPos(yrange.yhead)
-        if (anchor.pos === head.pos) {
-            return cm_state.EditorSelection.cursor(head.pos, head.assoc)
+        if (this.ytext.toString() !== this.editor.state.doc.toString()) {
+            new ErrorNotice("Doc differs from item! Overwriting with item doc value");
+            this.ytext.doc?.transact((tr) => {
+                this.ytext.delete(0, this.ytext.length)
+                this.ytext.insert(0, this.editor.state.doc.toString())
+            }, this)
         }
-        return cm_state.EditorSelection.range(anchor.pos, head.pos)
-    }
-}
-
-
-export const ySyncFacet = cm_state.Facet.define<YSyncConfig, YSyncConfig>({
-    combine(inputs) {
-        return inputs[inputs.length - 1]
-    }
-})
-
-/**
- * @type {cm_state.AnnotationType<YSyncConfig>}
- */
-export const ySyncAnnotation = cm_state.Annotation.define<YSyncConfig>()
-
-/**
- * @extends {PluginValue}
- */
-class YSyncPluginValue {
-    view: cm_view.EditorView;
-    conf: YSyncConfig;
-    #ytext: Y.Text;
-    #observer
-
-    constructor(view: cm_view.EditorView) {
-        this.view = view
-        this.conf = view.state.facet(ySyncFacet)
-
-        this.#observer = (event: Y.YTextEvent, transaction: Y.Transaction) => {
-            if (transaction.origin !== this.conf) {
+        
+        // yjs change handler function
+        this.observer = (event: Y.YTextEvent, transaction: Y.Transaction) => {
+            // only apply transactions originating from other clients
+            if (transaction.origin !== this) {
                 const delta = event.delta
-                const changes = []
+                const changes: cm_state.ChangeSpec[] = []
+
+                // walk through the quill delta steps, counting the current position
+                // which is needed for codemirror's absolutely indexed change format
                 let pos = 0
                 for (let i = 0; i < delta.length; i++) {
                     const d = delta[i]
+
+                    // Insert operation
                     if (d.insert != null) {
-                        changes.push({ from: pos, to: pos, insert: d.insert })
+                        changes.push({ from: pos, to: pos, insert: d.insert as string })
+                    
+                    // Delete operation
                     } else if (d.delete != null) {
                         changes.push({ from: pos, to: pos + d.delete, insert: '' })
+                        // codemirror positions are relative to before the transaction, 
+                        // so future changes must account for the now deleted characters
                         pos += d.delete
+                    
+                    // Retain operation
                     } else {
-                        pos += d.retain
+                        // skip the amount of characters that shall be retained without change
+                        pos += d.retain!
                     }
                 }
-                view.dispatch({ changes, annotations: [ySyncAnnotation.of(this.conf)] })
+
+                editor.dispatch({ changes, annotations: [ySyncAnnotation.of(this.editor)] })
             }
         }
-        this.#ytext = this.conf.ytext
-        this.#ytext.observe(this.#observer)
+        this.ytext.observe(this.observer)
     }
 
     /**
      * @param {cm_view.ViewUpdate} update
      */
     update(update: cm_view.ViewUpdate) {
-        if (!update.docChanged || (update.transactions.length > 0 && update.transactions[0].annotation(ySyncAnnotation) === this.conf)) {
+        if (!update.docChanged || (update.transactions.length > 0 && update.transactions[0].annotation(ySyncAnnotation) === this.editor)) {
             return
         }
-        const ytext = this.conf.ytext
+        const ytext = this.ytext
         ytext.doc!.transact(() => {
             /**
              * This variable adjusts the fromA position to the current position in the Y.Text type.
@@ -154,11 +120,11 @@ class YSyncPluginValue {
                 }
                 adj += insertText.length - (toA - fromA)
             })
-        }, this.conf)
+        }, this)
     }
 
     destroy() {
-        this.#ytext.unobserve(this.#observer)
+        this.ytext.unobserve(this.observer)
     }
 }
 

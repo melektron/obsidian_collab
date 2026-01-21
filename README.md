@@ -9,7 +9,7 @@ Open Source, live syncing and collaboration plugin for [Obsidian](https://obsidi
 For plugin development, the plugin can be symlinked to an Obsidian Vault for testing:
 
 ```bash
-ln -s /home/user/path/to/repos/obsidian_colab ~/Documents/path/to/vault/.obsidian/plugins/obsidian_colab
+ln -s /home/user/path/to/repos/obsidian_collab ~/Documents/path/to/vault/.obsidian/plugins/obsidian_collab
 ```
 
 Also install [hot-reload](https://github.com/pjeby/hot-reload) to automatically reload the plugin when making changes during development.

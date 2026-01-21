@@ -6,7 +6,7 @@ const banner =
 `/*
 THIS IS A BUNDLED FILE BY ESBUILD
 if you want to view the source, please visit the github repository of this plugin:
-https://github.com/melektron/obsidian_colab/
+https://github.com/melektron/obsidian_collab/
 */
 `;
 

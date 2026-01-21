@@ -7,7 +7,7 @@ www.elektron.work
 CodeMirror view plugin used for debugging
 */
 
-import { TFile } from 'obsidian';
+import { TFile, editorInfoField } from 'obsidian';
 import * as cm_view from "@codemirror/view";
 import * as cm_state from '@codemirror/state';
 import { h } from "dom-chef" ;
@@ -28,19 +28,16 @@ class DebugStateField {
         // initialize editor ID for debugging
         this.editor_num = editor_count++;
 
-        // figure out what file the editor has opened.
-        // This constructor is called when the EditorView is initialized with
-        // the EditorState, at which point the active file has been set to the
-        // right value. TODO: there might be edge cases when an editor is 
-        // created but the file is not updated yet, maybe check that...
-        let file = go.plugin_inst.app.workspace.getActiveFile();
-        if (file === null) {
+        let editorInfo = state.field(editorInfoField);
+        let app = editorInfo.app;
+        if (editorInfo.file) {
+            this.file = editorInfo.file;
+        } else {
             new ErrorNotice("Collab could not determine which file was opened. This editor will not be synced.");
             throw Error("getActiveFile() failed");
         }
-        this.file = file
-
-        this.logw("New Editor with file: ", this.file);
+        
+        this.logw("New Editor with file: ", this.file.path);
         this.logw("and text: ", state.doc.toString());
 
     }
@@ -113,7 +110,7 @@ export class DebugViewPlugin implements cm_view.PluginValue {
         if (field === undefined) return;
 
         if (update.docChanged) {
-            field.loge("Doc changed.", update.changes);
+            //field.loge("Doc changed.", update.changes);
             this.counter_element.textContent = update.state.doc.length + "";
         }
     }

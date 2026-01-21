@@ -5,12 +5,13 @@ import * as random from "lib0/random";
 import * as Y from "yjs";
 import * as awarenessProtocol from "y-protocols/awareness";
 import { WebsocketProvider } from "y-websocket";
-import { yCollab } from "y-codemirror.next";
 
 import { go } from "./plugin_inst";
 import { debugViewPlugin, debugStateField } from "./editor/debug_view_plugin";
 import { CollabSettings, DEFAULT_SETTINGS, CollabSettingTab } from "./settings";
 import { ErrorNotice } from "./components";
+import { ItemResolver, itemResolverFacet } from "./item_resolver";
+import { ySync } from "./editor/y-sync";
 
 
 // Remember to rename these classes and interfaces!
@@ -20,6 +21,7 @@ export default class ObsidianCollabPlugin extends Plugin {
     settings: CollabSettings;
     lastEditor: Editor | undefined;
     editor_extensions: Extension[];
+    resolver: ItemResolver
 
 
     
@@ -27,6 +29,8 @@ export default class ObsidianCollabPlugin extends Plugin {
         go.plugin_inst = this;
         await this.loadSettings();
         //this.app.emulateMobile();   // @ts-ignore
+
+        this.resolver = new ItemResolver()
 
 
         // This adds a status bar item to the bottom of the app. Does not work on mobile apps.
@@ -111,7 +115,7 @@ export default class ObsidianCollabPlugin extends Plugin {
         this.lastEditor = undefined;
 
         this.app.workspace.on("active-leaf-change", (leaf) => {
-            console.log("active-leaf-change:", leaf);
+            //console.log("active-leaf-change:", leaf);
         });
 
         // This creates an icon in the left ribbon.
@@ -126,7 +130,6 @@ export default class ObsidianCollabPlugin extends Plugin {
         });
         // Perform additional things with the ribbon
         ribbonIconEl.addClass("my-plugin-ribbon-class");
-
 
 
                 
@@ -165,14 +168,22 @@ export default class ObsidianCollabPlugin extends Plugin {
         //    colorLight: userColor.light
         //})
 
+        this.registerObsidianProtocolHandler("collab", (params) => {
+            params.action
+        });
+
 
 
         this.editor_extensions = [
-            debugViewPlugin,
-            debugStateField,
+            //debugViewPlugin,
+            //debugStateField,
+            itemResolverFacet.of(this.resolver),
+            ySync
             //yCollab(ytext, undefined, { undoManager: false })
         ];
         this.registerEditorExtension(this.editor_extensions);
+
+        console.log(this.app);
 
     }
 
