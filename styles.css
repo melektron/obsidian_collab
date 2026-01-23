@@ -9,5 +9,15 @@ If your plugin does not need CSS, delete this file.
 
 /* style error notices with red background */ 
 div.notice:has(div > span.collab_error_notice) {
-    background-color: red;
+    background-color: rgb(169, 0, 0);
+}
+div.notice:has(div > span.collab_warning_notice) {
+    background-color: rgb(250, 160, 0);
+}
+div.notice:has(div > span.collab_info_notice) {
+    /* this is just the default black */
+    background-color: auto;
+}
+div.notice:has(div > span.collab_debug_notice) {
+    background-color: purple;
 }

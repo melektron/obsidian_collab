@@ -9,7 +9,7 @@ import { WebsocketProvider } from "y-websocket";
 import { go } from "./plugin_inst";
 import { debugViewPlugin, debugStateField } from "./editor/debug_view_plugin";
 import { CollabSettings, DEFAULT_SETTINGS, CollabSettingTab } from "./settings";
-import { ErrorNotice } from "./components";
+import { DebugNotice, ErrorNotice, InfoNotice, WarningNotice } from "./components";
 import { ItemResolver, itemResolverFacet } from "./item_resolver";
 import { ySync } from "./editor/y-sync";
 
@@ -26,6 +26,8 @@ export default class ObsidianCollabPlugin extends Plugin {
 
     
     async onload() {
+        let loadingNotice = new InfoNotice("Collab loading...");
+
         go.plugin_inst = this;
         await this.loadSettings();
         //this.app.emulateMobile();   // @ts-ignore
@@ -49,7 +51,29 @@ export default class ObsidianCollabPlugin extends Plugin {
             id: "trigger-error-notice",
             name: "Trigger Error Notice",
             callback: () => {
-                new ErrorNotice("Test Error notice triggered by command");
+                let notice = new ErrorNotice("Test Error notice triggered by command with edit and hide");
+                setTimeout(() => {notice.appendMessage(" Appendix").hideAfter(1)}, 3000)
+            }
+        });
+        this.addCommand({
+            id: "trigger-warning-notice",
+            name: "Trigger Warning Notice",
+            callback: () => {
+                new WarningNotice("Test Warning notice triggered by command");
+            }
+        });
+        this.addCommand({
+            id: "trigger-info-notice",
+            name: "Trigger Info Notice",
+            callback: () => {
+                new InfoNotice("Test Info notice triggered by command");
+            }
+        });
+        this.addCommand({
+            id: "trigger-debug-notice",
+            name: "Trigger Debug Notice",
+            callback: () => {
+                new DebugNotice("Test Debug notice triggered by command");
             }
         });
         this.addCommand({
@@ -183,12 +207,13 @@ export default class ObsidianCollabPlugin extends Plugin {
         ];
         this.registerEditorExtension(this.editor_extensions);
 
-        console.log(this.app);
-
+        loadingNotice.appendMessage(" Done.").hideAfter(2);
     }
 
     onunload() {
+        let unloadingNotice = new InfoNotice("Collab unloading...");
 
+        unloadingNotice.appendMessage(" Done.").hideAfter(2);
     }
 
     onCreate(file: TAbstractFile) {
