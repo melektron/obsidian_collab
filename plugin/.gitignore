@@ -22,3 +22,6 @@ data.json
 .DS_Store
 
 src/obsidian_app.js
+
+dist/*
+!dist/.hotreload

@@ -1,6 +1,7 @@
 import esbuild from "esbuild";
 import process from "process";
 import builtins from "builtin-modules";
+import copy from "esbuild-plugin-copy";
 
 const banner =
 `/*
@@ -38,8 +39,28 @@ const context = await esbuild.context({
 	logLevel: "info",
 	sourcemap: prod ? false : "inline",
 	treeShaking: true,
-	outfile: "main.js",
+	outfile: "dist/main.js",
 	minify: prod,
+    plugins: [
+        copy({
+            resolveFrom: "cwd",
+            assets: [
+                // if we copy the entire folder contents, watch doesn't work
+                {
+                    from: ["./static/styles.css"],
+                    to: ["./dist/styles.css"],
+                    watch: true,
+                },
+                {
+                    from: ["./static/manifest.json"],
+                    to: ["./dist/manifest.json"],
+                    watch: true,
+                },
+            ],
+            // global watch also doesn't seem to work
+            //watch: true,
+        })
+    ]
 });
 
 if (prod) {

@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-sample-plugin",
-	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"name": "obsidian-collab",
+	"version": "0.1.0",
+	"description": "Sync folders across devices and collaborate with colleges in real-time.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
@@ -24,9 +24,9 @@
 		"typescript": "4.7.4",
 		"y-protocols": "^1.0.6",
 		"y-websocket": "^3.0.0",
-		"yjs": "^13.6.27"
+		"yjs": "^13.6.27",
+        "y-indexeddb": "^9.0.12",
+        "esbuild-plugin-copy": "^2.1.1"
 	},
-	"dependencies": {
-		"y-indexeddb": "^9.0.12"
-	}
+	"dependencies": {}
 }
