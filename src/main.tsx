@@ -1,5 +1,5 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, TAbstractFile, TFile } from "obsidian";
-import { Extension } from "@codemirror/state";
+import { EditorState, Extension } from "@codemirror/state";
 import { h } from "dom-chef" ;
 import * as random from "lib0/random";
 import * as Y from "yjs";
@@ -124,8 +124,6 @@ export default class ObsidianCollabPlugin extends Plugin {
         // When registering intervals, this function will automatically clear the interval when the plugin is disabled.
         //this.registerInterval(window.setInterval(() => console.log("setInterval"), 5 * 60 * 1000));
 
-
-
         // listen to file creations, deletions and changes for sending to the server
         // This needs to be done after app is loaded as it is also called while all files are loaded
         // https://docs.obsidian.md/Plugins/Guides/Optimizing+plugin+load+time#Listening+to+%60vault.on("create")%60
@@ -202,7 +200,8 @@ export default class ObsidianCollabPlugin extends Plugin {
             //debugViewPlugin,
             //debugStateField,
             itemResolverFacet.of(this.resolver),
-            ySync
+            ySync,
+            EditorState.readOnly.of(true),
             //yCollab(ytext, undefined, { undoManager: false })
         ];
         this.registerEditorExtension(this.editor_extensions);
