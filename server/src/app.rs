@@ -30,38 +30,51 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::webserver::WebServer;
+use crate::{args::Args, doc_provider::DocProvider, webserver::WebServer};
 
 pub struct AppState {
     pub terminate: CancellationToken,
 }
 
 pub struct App {
+    args: Args,
     app_state: Arc<AppState>,
-    web_server: Arc<WebServer>
+    doc_provider: Arc<DocProvider>,
+    web_server: Arc<WebServer>,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(args: Args) -> Self {
         let app_state = Arc::new(AppState {
             terminate: CancellationToken::new(),
         });
 
-        let web_server = Arc::new(WebServer::new(
+        let doc_provider = Arc::new(DocProvider::new(
             &app_state
         ));
 
+        let web_server = Arc::new(WebServer::new(
+            &app_state,
+            &doc_provider
+        ));
+
         Self { 
+            args,
             app_state,
+            doc_provider,
             web_server
         }
     }
 
     pub async fn run(&self) -> Result<()> {
 
-        let results = tokio::join!(
-            self.web_server.clone().run()
-        );
+        info!("Storing persistent data in {}", self.args.data.display());
+
+        // run all components until all complete or one fails
+        tokio::try_join!(
+            self.doc_provider.clone().run(),
+            self.web_server.clone().run(),
+        )?;
 
         Ok(())
     }

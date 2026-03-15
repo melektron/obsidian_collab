@@ -13,21 +13,22 @@ use anyhow::{Context, Result};
 use axum::{Router, routing::get};
 use tokio::net::TcpListener;
 
-use crate::app::AppState;
+use crate::{app::AppState, doc_provider::DocProvider};
 
 
 pub struct WebServer {
-    app_state: Arc<AppState>
+    app_state: Arc<AppState>,
+    doc_provider: Arc<DocProvider>,
 }
 
 mod routes {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
-    use anyhow::{Context, Result};
-    use axum::{body::Bytes, extract::{Path, State, WebSocketUpgrade, ws::{CloseFrame, WebSocket}}, response::Response};
+    use axum::{extract::{Path, State, WebSocketUpgrade, ws::WebSocket}, response::Response};
     use log::{debug, error, info};
+    use tokio::time::sleep;
     
-    use crate::webserver::WebServer;
+    use crate::{client_repr::ClientRepr, webserver::WebServer};
 
     pub async fn health_check(
         State(state): State<Arc<WebServer>>
@@ -46,7 +47,7 @@ mod routes {
         format!("Done, user_id: {user_id}, id2: {id2}")
     }
 
-    pub async fn ws_handler(
+    pub async fn collab_ws(
         State(state): State<Arc<WebServer>>,
         upgrade_handler: WebSocketUpgrade
     ) -> Response {
@@ -55,77 +56,36 @@ mod routes {
                 error!("Websocket upgrade failed: {error}")
             })
             .on_upgrade(|socket| async {
-                if let Err(e) = handle_socket(state, socket).await {
-                    error!("Websocket handler crashed: {e:?}")
-                };
-                ()
+                handle_collab_client(state, socket).await
             })
     }
 
-    pub async fn handle_socket(
+    pub async fn handle_collab_client(
         state: Arc<WebServer>,
-        mut socket: WebSocket
-    ) -> Result<()> {
-        info!("Websocket connected");
-
-        while let Some(msg) = socket.recv().await {
-            let msg = msg.context("Error extracting websocket message")?;
-
-            match &msg {
-                axum::extract::ws::Message::Text(utf8_bytes) => {
-                    info!("Got Text message: {}", utf8_bytes.as_str());
-                    if utf8_bytes.as_str() == "terminate" {
-                        state.app_state.terminate.cancel();
-                    } else if utf8_bytes.as_str() == "kill" {
-                        info!("Killing by dropping socket");
-                        return Ok(());
-                    } else if utf8_bytes.as_str() == "close" {
-                        info!("Closing by sending close message");
-                        socket.send(axum::extract::ws::Message::Close(Some(CloseFrame { 
-                            code: 1001, reason: "close".into() 
-                        }))).await?;
-                    } else if utf8_bytes.as_str() == "cterm" {
-                        info!("Closing by sending close message then terminating");
-                        socket.send(axum::extract::ws::Message::Close(Some(CloseFrame { 
-                            code: 1001, reason: "cterm".into() 
-                        }))).await?;
-                        state.app_state.terminate.cancel();
-                    } else {
-                        socket.send(msg).await?;
-                    }
-                    
-                },
-                axum::extract::ws::Message::Binary(bytes) => {
-                    info!("Got Binary message: {:?}", bytes);
-                    socket.send(msg).await?;
-                },
-                axum::extract::ws::Message::Ping(bytes) => {
-                    info!("Got Ping message: {:?}", bytes);
-                    // pong is apparently handled automatically
-                    //socket.send(axum::extract::ws::Message::Pong(Bytes::new())).await?;
-                },
-                axum::extract::ws::Message::Pong(bytes) => {
-                    info!("Got Pong message: {:?}", bytes);
-                },
-                axum::extract::ws::Message::Close(close_frame) => {
-                    if let Some(close_frame) = close_frame {
-                        info!("Got Close message: {:?}", close_frame)
-                    } else {
-                        info!("Got Close message that is None")
-                    }
-                },
-            }
-        }
-        debug!("recv returned None");
-
-        Ok(())
+        socket: WebSocket
+    ) {
+        info!("Collab client connected");
+        let client = ClientRepr::new(
+            &state.app_state,
+            &state.doc_provider,
+            socket
+        );
+        if let Err(e) = client.run().await {
+            error!("Collab client handler crashed, disconnecting: {e:?}");
+            return 
+        };
+        info!("Collab client disconnected");
     }
 }
 
 impl WebServer {
-    pub fn new(app_state: &Arc<AppState>) -> Self {
-        WebServer { 
-            app_state: app_state.clone()
+    pub fn new(
+        app_state: &Arc<AppState>,
+        doc_provider: &Arc<DocProvider>,
+    ) -> Self {
+        Self { 
+            app_state: app_state.clone(),
+            doc_provider: doc_provider.clone()
         }
     }
 
@@ -137,12 +97,15 @@ impl WebServer {
         let app = Router::new()
             .route("/health", get(routes::health_check))
             .route("/terminate/{id}/{id2}/now", get(routes::terminate))
-            .route("/ws", get(routes::ws_handler))
+            .route("/collab", get(routes::collab_ws))
             .with_state(self.clone());
 
         axum::serve(listener, app)
             .with_graceful_shutdown({
                 let this = self.clone();
+                // TODO: rewrite this so we cleanly disconnect all clients first 
+                // before we "gracefully" shut down the server, which seems to just
+                // cancel all the futures or at least close all sockets.
                 async move { this.app_state.terminate.cancelled().await }
             })
             .await?;
