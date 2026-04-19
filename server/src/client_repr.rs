@@ -7,7 +7,7 @@ www.elektron.work
 Structure representing a collab client
 */
 
-use std::{collections::HashSet, pin::Pin, sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use axum::extract::ws;
@@ -16,7 +16,7 @@ use futures::{
     stream::{SplitSink, SplitStream},
 };
 use log::{debug, info, warn};
-use tokio::{sync::Mutex, time::{Sleep, sleep}};
+use tokio::{sync::Mutex, time::sleep};
 use tokio_util::{future::FutureExt, sync::CancellationToken};
 use uuid::Uuid;
 
@@ -111,6 +111,7 @@ impl ClientRepr {
                     self.force_close.cancel();
                 } else if utf8_bytes.as_str() == "close" {
                     info!("Closing by sending close message");
+                    sleep(Duration::from_secs(5)).await;
                     self.disconnect(1001, "close").await;
                 } else if utf8_bytes.as_str() == "cterm" {
                     info!("Closing by sending close message then terminating");
@@ -150,18 +151,18 @@ impl ClientRepr {
     /// If the disconnect handshake times out, the connection
     /// is forcefully closed by canceling `self.force_close`.
     async fn disconnect(&self, code: u16, reason: &str) {
-        //if let Err(e) = self
-        //    .sink
-        //    .lock()
-        //    .await
-        //    .send(axum::extract::ws::Message::Close(Some(ws::CloseFrame {
-        //        code: code,
-        //        reason: reason.into(),
-        //    })))
-        //    .await
-        //{
-        //    warn!("Failed to send close message: {e}")
-        //}
+        if let Err(e) = self
+            .sink
+            .lock()
+            .await
+            .send(axum::extract::ws::Message::Close(Some(ws::CloseFrame {
+                code: code,
+                reason: reason.into(),
+            })))
+            .await
+        {
+            warn!("Failed to send close message: {e}")
+        }
 
         // force close the client if it disconnect handshake times out
         tokio::spawn({

@@ -7,30 +7,18 @@ www.elektron.work
 
 */
 
-use std::{
-    net::SocketAddr,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicU32},
-    },
-    vec,
-};
+use std::sync::Arc;
 
-use anyhow::{Context, Result};
-use axum::{Router, routing::get};
-use log::{error, info};
-use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    net::{
-        TcpListener, TcpStream,
-        tcp::{ReadHalf, WriteHalf},
-    },
-    select,
-    sync::{Notify, RwLock, Semaphore},
-};
+use anyhow::Result;
+use log::info;
 use tokio_util::sync::CancellationToken;
 
-use crate::{args::Args, doc_provider::DocProvider, webserver::WebServer};
+use crate::{
+    args::Args,
+    doc_provider::DocProvider,
+    repl::{Repl, ReplIo},
+    webserver::WebServer,
+};
 
 pub struct AppState {
     pub terminate: CancellationToken,
@@ -38,45 +26,56 @@ pub struct AppState {
 
 pub struct App {
     args: Args,
-    app_state: Arc<AppState>,
+    _app_state: Arc<AppState>,
     doc_provider: Arc<DocProvider>,
     web_server: Arc<WebServer>,
+    repl: Option<Arc<Repl>>,
 }
 
 impl App {
-    pub fn new(args: Args) -> Self {
+    pub fn new(
+        args: Args,
+        // optional repl IO when running interactively
+        repl_io: Option<ReplIo>,
+    ) -> Self {
         let app_state = Arc::new(AppState {
             terminate: CancellationToken::new(),
         });
 
-        let doc_provider = Arc::new(DocProvider::new(
-            &app_state
-        ));
+        let doc_provider = Arc::new(DocProvider::new(&app_state));
 
-        let web_server = Arc::new(WebServer::new(
-            &app_state,
-            &doc_provider
-        ));
+        let web_server = Arc::new(WebServer::new(&app_state, &doc_provider));
 
-        Self { 
+        // only create repl if it exists
+        let repl = repl_io.map(|io| Arc::new(Repl::new(&app_state, io)));
+
+        Self {
             args,
-            app_state,
+            _app_state: app_state,
             doc_provider,
-            web_server
+            web_server,
+            repl,
         }
     }
 
     pub async fn run(&self) -> Result<()> {
-
         info!("Storing persistent data in {}", self.args.data.display());
 
-        // run all components until all complete or one fails
-        tokio::try_join!(
-            self.doc_provider.clone().run(),
-            self.web_server.clone().run(),
-        )?;
+        // run all components until all complete or one fails.
+        // run repl only if it it is available
+        if let Some(repl) = &self.repl {
+            tokio::try_join!(
+                self.doc_provider.clone().run(),
+                self.web_server.clone().run(),
+                repl.clone().run(),
+            )?;
+        } else {
+            tokio::try_join!(
+                self.doc_provider.clone().run(),
+                self.web_server.clone().run(),
+            )?;
+        }
 
         Ok(())
     }
-
 }
