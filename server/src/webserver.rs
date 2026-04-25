@@ -22,11 +22,10 @@ pub struct WebServer {
 }
 
 mod routes {
-    use std::{sync::Arc, time::Duration};
+    use std::{sync::Arc};
 
     use axum::{extract::{Path, State, WebSocketUpgrade, ws::WebSocket}, response::Response};
-    use log::{debug, error, info};
-    use tokio::time::sleep;
+    use log::{error, info};
     
     use crate::{client_repr::ClientRepr, webserver::WebServer};
 

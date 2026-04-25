@@ -15,7 +15,7 @@ use clap::Parser;
 #[command(version, about, long_about = None)]
 pub struct Args {
     /// Data folder where documents are stored
-    #[arg(short, long)]
+    #[arg(short, long, default_value = "./data")]
     pub data: PathBuf,
 
     ///// Config file location

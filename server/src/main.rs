@@ -7,9 +7,8 @@ mod repl;
 mod webserver;
 
 use std::{
-    io::{IsTerminal, Write},
+    io::{IsTerminal},
     process::ExitCode,
-    time::Duration,
 };
 
 use anyhow::Context;
