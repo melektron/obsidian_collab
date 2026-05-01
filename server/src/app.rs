@@ -47,7 +47,7 @@ impl App {
         let web_server = Arc::new(WebServer::new(&app_state, &doc_provider));
 
         // only create repl if it exists
-        let repl = repl_io.map(|io| Arc::new(Repl::new(&app_state, io)));
+        let repl = repl_io.map(|io| Arc::new(Repl::new(&app_state, &doc_provider, io)));
 
         Self {
             args,

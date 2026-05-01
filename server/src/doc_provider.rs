@@ -36,10 +36,10 @@ pub const DOC_ID: Uuid = uuid!("00000000-0000-0000-0000-ffff00000000");
 
 
 pub struct DocWrapper {
-    ydoc: Mutex<Doc>,
+    pub ydoc: Mutex<Doc>,
     // TODO: This stores a pointer to something owned by teh above document. 
     // is it even safe to keep here? does the doc need external Pinning?
-    text: TextRef
+    pub text: TextRef
 }
 
 impl DocWrapper {
@@ -112,7 +112,7 @@ impl DocProvider {
         debug!("State: {:#?}", sv2);
 
         info!("now the json...");
-        let msg = CollabMessage {
+        let msg = CollabMessage::YSync {
             doc_id: DOC_ID.clone(),
             ysync_message: encoded
         };

@@ -34,6 +34,12 @@ pub struct ClientRepr {
     app_state: Arc<AppState>,
     doc_provider: Arc<DocProvider>,
 
+    // unique identifier for the client to use as the
+    // CRDT client ID (which should be called replica ID).
+    // TODO: maybe we want to transition to per-document replica-ids
+    // to allow for improved scalability?
+    client_id: u32,
+
     sink: Mutex<WsSink>,
     stream: Mutex<WsStream>,
     active_docs: HashSet<Uuid>,
@@ -50,6 +56,7 @@ impl ClientRepr {
     pub fn new(
         app_state: &Arc<AppState>,
         doc_provider: &Arc<DocProvider>,
+        client_id: u32,
         socket: ws::WebSocket,
     ) -> Self {
         let (sink, stream) = socket.split();
@@ -57,6 +64,8 @@ impl ClientRepr {
         Self {
             app_state: app_state.clone(),
             doc_provider: doc_provider.clone(),
+
+            client_id,
 
             sink: Mutex::new(sink),
             stream: Mutex::new(stream),

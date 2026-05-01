@@ -8,20 +8,77 @@ REPL for direct interaction with the collab server
 while it is running.
 */
 
+use anstyle::{AnsiColor, Style};
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use log::info;
 use rustyline_async::{Readline, ReadlineEvent, SharedWriter};
+use yrs::{AsyncTransact, GetString, Text};
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use tokio_util::future::FutureExt;
 
 use crate::app::AppState;
+use crate::doc_provider::{DOC_ID, DocProvider};
+use crate::errors::CollabError;
 
 pub fn handle_write_fail(r: Result<(), std::io::Error>) {
     if let Err(e) = r {
         eprintln!("Failed to write to interactive console: {e:?}")
     }
+}
+
+
+fn colorize(color: AnsiColor, text: &str) -> String {
+    let style = Style::new().fg_color(Some(color.into()));
+    format!("{style}{text}{}", anstyle::Reset)
+}
+
+macro_rules! shelloutln {
+    // colored form: self, color => fmt, args...
+    ($self:expr, $color:expr => $fmt:expr $(, $args:expr)* $(,)?) => {
+        handle_write_fail(
+            writeln!(
+                $self.stdout.clone(),
+                "{}",
+                colorize($color, &format!($fmt $(, $args)*))
+            )
+        )
+    };
+
+    // plain form: self, fmt, args...
+    ($self:expr, $fmt:expr $(, $args:expr)* $(,)?) => {
+        handle_write_fail(
+            writeln!(
+                $self.stdout.clone(),
+                $fmt $(, $args)*
+            )
+        )
+    };
+}
+
+#[expect(unused)]
+macro_rules! shellout {
+    // colored form: self, color => fmt, args...
+    ($self:expr, $color:expr => $fmt:expr $(, $args:expr)* $(,)?) => {
+        handle_write_fail(
+            write!(
+                $self.stdout.clone(),
+                "{}",
+                colorize($color, &format!($fmt $(, $args)*))
+            )
+        )
+    };
+
+    // plain form: self, fmt, args...
+    ($self:expr, $fmt:expr $(, $args:expr)* $(,)?) => {
+        handle_write_fail(
+            write!(
+                $self.stdout.clone(),
+                $fmt $(, $args)*
+            )
+        )
+    };
 }
 
 #[derive(Parser, Debug)]
@@ -57,30 +114,43 @@ enum ReplCommands {
     )]
     Exit,
 
-    Connect {
-        host: String,
-
-        #[arg(short, long, default_value_t = 8080)]
-        port: u16,
+    #[command(alias = "a", about = "Appends text to the document")]
+    Append {
+        text: String,
     },
 
-    Send {
-        message: String,
+    #[command(alias = "i", about = "Inserts text into the document")]
+    Insert {
+        position: u16,
+        text: String,
     },
+
+    #[command(alias = "d", about = "Deletes a range of text in the document")]
+    Delete {
+        position: u16,
+        len: u16,
+    },
+
+    #[command(alias = "p", about = "Prints the current document")]
+    Print,
+
 }
 
 pub type ReplIo = (Readline, SharedWriter);
 
 pub struct Repl {
     app_state: Arc<AppState>,
+    doc_provider: Arc<DocProvider>,
+
     rl: Mutex<Readline>,
     stdout: SharedWriter,
 }
 
 impl Repl {
-    pub fn new(app_state: &Arc<AppState>, io: ReplIo) -> Self {
+    pub fn new(app_state: &Arc<AppState>, doc_provider: &Arc<DocProvider>, io: ReplIo) -> Self {
         Self {
             app_state: app_state.clone(),
+            doc_provider: doc_provider.clone(),
             rl: Mutex::new(io.0),
             stdout: io.1,
         }
@@ -107,16 +177,13 @@ impl Repl {
                         Ok(invocation) => invocation.command,
                         Err(e) if e.downcast_ref::<shell_words::ParseError>().is_some() => {
                             // shell_words error comes from invalid syntax
-                            handle_write_fail(writeln!(self.stdout.clone(), "Syntax error: {e}"));
+                            shelloutln!(self, AnsiColor::Red => "Syntax error: {e}");
                             continue;
                         }
                         Err(e) => {
                             // filter unknown errors
                             let Some(clap_error) = e.downcast_ref::<clap::Error>() else {
-                                handle_write_fail(writeln!(
-                                    self.stdout.clone(),
-                                    "Unexpected error during REPL command parsing: {e}"
-                                ));
+                                shelloutln!(self, AnsiColor::Red => "Unexpected error during REPL command parsing: {e}");
                                 continue;
                             };
                             // this is probably a clap error, so no prefix, it just prints the clap output (e.g. help text).
@@ -131,7 +198,9 @@ impl Repl {
                     };
 
                     // valid command has been invoked
-                    self.handle_command(command);
+                    if let Err(e) = self.handle_command(command).await {
+                        shelloutln!(self, AnsiColor::Red => "Command failed: {e}");
+                    };
                 }
                 Ok(ReadlineEvent::Interrupted) => {
                     self.app_state.terminate.cancel();
@@ -155,7 +224,7 @@ impl Repl {
         Ok(ReplInvocation::try_parse_from(args)?)
     }
 
-    fn handle_command(&self, cmd: ReplCommands) {
+    async fn handle_command(&self, cmd: ReplCommands) -> Result<()> {
         match cmd {
             ReplCommands::HelpShortcut => {
                 handle_write_fail(
@@ -173,9 +242,52 @@ impl Repl {
             ReplCommands::Exit => {
                 self.app_state.terminate.cancel();
             }
-            _ => {
-                info!("Unhandled command: {cmd:?}");
+            ReplCommands::Append { text } => {
+                let doc = self.doc_provider.get_doc_by_id(DOC_ID);
+                let ydoc = doc.ydoc.lock().map_err(|_| CollabError::LockFailed)?;
+
+                let mut txn = ydoc.transact_mut().await;
+                shelloutln!(self, "Before: {}", doc.text.get_string(&txn));
+
+                let old_len = doc.text.len(&txn);
+                doc.text.insert(&mut txn, old_len, text.as_str());
+                txn.commit();
+                
+                shelloutln!(self, "After: {}", doc.text.get_string(&txn));
+            }
+            ReplCommands::Insert { position, text } => {
+                let doc = self.doc_provider.get_doc_by_id(DOC_ID);
+                let ydoc = doc.ydoc.lock().map_err(|_| CollabError::LockFailed)?;
+
+                let mut txn = ydoc.transact_mut().await;
+                shelloutln!(self, "Before: {}", doc.text.get_string(&txn));
+                
+                doc.text.insert(&mut txn, position.into(), text.as_str());
+                txn.commit();
+
+                shelloutln!(self, "After: {}", doc.text.get_string(&txn));
+            }
+            ReplCommands::Delete { position, len } => {
+                let doc = self.doc_provider.get_doc_by_id(DOC_ID);
+                let ydoc = doc.ydoc.lock().map_err(|_| CollabError::LockFailed)?;
+
+                let mut txn = ydoc.transact_mut().await;
+                shelloutln!(self, "Before: {}", doc.text.get_string(&txn));
+                
+                doc.text.remove_range(&mut txn, position.into(), len.into());
+                txn.commit();
+
+                shelloutln!(self, "After: {}", doc.text.get_string(&txn));
+
+            }
+            ReplCommands::Print => {
+                let doc = self.doc_provider.get_doc_by_id(DOC_ID);
+                let ydoc = doc.ydoc.lock().map_err(|_| CollabError::LockFailed)?;
+                let txn = ydoc.transact().await;
+                shelloutln!(self, "{}", doc.text.get_string(&txn));
             }
         }
+
+        Ok(())
     }
 }

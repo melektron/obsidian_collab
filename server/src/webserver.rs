@@ -7,7 +7,7 @@ www.elektron.work
 Subsystem for handling web/websocket requests
 */
 
-use std::sync::Arc;
+use std::sync::{Arc, atomic::{AtomicU32, Ordering}};
 
 use anyhow::{Context, Result};
 use axum::{Router, routing::get};
@@ -19,6 +19,13 @@ use crate::{app::AppState, doc_provider::DocProvider};
 pub struct WebServer {
     app_state: Arc<AppState>,
     doc_provider: Arc<DocProvider>,
+
+    // unique identifier used by clients as the CRDT client id 
+    // (should probably be called replica ID). This must be unique
+    // across all clients and sessions.
+    // TODO: this must be persisted between restarts in the future
+    // for better scalability?
+    next_client_id: AtomicU32,
 }
 
 mod routes {
@@ -67,6 +74,7 @@ mod routes {
         let client = ClientRepr::new(
             &state.app_state,
             &state.doc_provider,
+            state.alloc_client_id(),
             socket
         );
         if let Err(e) = client.run().await {
@@ -84,7 +92,8 @@ impl WebServer {
     ) -> Self {
         Self { 
             app_state: app_state.clone(),
-            doc_provider: doc_provider.clone()
+            doc_provider: doc_provider.clone(),
+            next_client_id: AtomicU32::new(0),
         }
     }
 
@@ -110,6 +119,11 @@ impl WebServer {
             .await?;
 
         Ok(())
+    }
+
+    fn alloc_client_id(&self) -> u32 {
+        // TODO: may be able to change to Relaxed, but SeqCst is safe for now
+        self.next_client_id.fetch_add(1, Ordering::SeqCst)
     }
 
     fn print_stuff(&self) {

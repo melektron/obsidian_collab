@@ -5,6 +5,7 @@ mod collab_proto;
 mod doc_provider;
 mod repl;
 mod webserver;
+mod errors;
 
 use std::{
     io::{IsTerminal},
@@ -13,13 +14,13 @@ use std::{
 
 use anyhow::Context;
 use clap::Parser;
-use env_logger::{WriteStyle, fmt::Formatter};
+use env_logger::{Env, WriteStyle, fmt::Formatter};
 use log::{Record, info};
 use rustyline_async::Readline;
 
 use crate::{args::Args, repl::ReplIo};
 
-const DEFAULT_LOG_LEVEL: log::LevelFilter = log::LevelFilter::Info;
+const DEFAULT_LOG_LEVEL: &str = "info";
 
 fn format_log(buf: &mut Formatter, record: &Record) -> Result<(), std::io::Error> {
     use std::io::Write;
@@ -77,9 +78,9 @@ async fn main() -> ExitCode {
         // save readline and stdout instance for use by repl
         repl_io = Some((rl, stdout.clone()));
 
+
         // setup logging to repl stdout
-        env_logger::Builder::from_default_env()
-            .filter_level(DEFAULT_LOG_LEVEL)
+        env_logger::Builder::from_env(Env::default().default_filter_or(DEFAULT_LOG_LEVEL))
             .format(format_log)
             .target(env_logger::Target::Pipe(Box::new(stdout.clone())))
             // force allow ANSI sequences (pipe target normally disables them)
@@ -97,8 +98,7 @@ async fn main() -> ExitCode {
         );
     } else {
         // setup logging to stdout
-        env_logger::Builder::from_default_env()
-            .filter_level(DEFAULT_LOG_LEVEL)
+        env_logger::Builder::from_env(Env::default().default_filter_or(DEFAULT_LOG_LEVEL))
             .format(format_log)
             .target(env_logger::Target::Stdout)
             .init();
