@@ -7,7 +7,7 @@ www.elektron.work
 Structure representing a collab client
 */
 
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{collections::HashSet, os::linux::raw::stat, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use axum::extract::ws;
@@ -16,19 +16,23 @@ use futures::{
     stream::{SplitSink, SplitStream},
 };
 use log::{debug, info, warn};
+use serde::{Deserialize, Serialize};
 use tokio::{sync::Mutex, time::sleep};
 use tokio_util::{future::FutureExt, sync::CancellationToken};
 use uuid::Uuid;
+use yrs::{AsyncTransact, ReadTxn, StateVector, updates::{decoder::Decode, encoder::Encode}};
 
-use crate::{app::AppState, doc_provider::DocProvider};
-
+use crate::{
+    app::AppState,
+    collab_proto::{CollabMessageC2S, CollabMessageS2C, SyncStep1Inner, SyncStep2Inner},
+    doc_provider::DocProvider,
+    errors::CollabError,
+};
 
 type WsSink = SplitSink<ws::WebSocket, ws::Message>;
 type WsStream = SplitStream<ws::WebSocket>;
 
-
 const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-
 
 pub struct ClientRepr {
     app_state: Arc<AppState>,
@@ -88,7 +92,7 @@ impl ClientRepr {
                 // got message
                 Some(Some(msg)) => {
                     let msg = msg.context("Error extracting websocket message")?;
-                    self.handle_message(msg).await?;
+                    self.handle_websocket_message(msg).await?;
                 }
                 // token canceled -> force exit
                 None => {
@@ -107,29 +111,29 @@ impl ClientRepr {
     }
 
     /// handles incoming websocket messages.
-    /// returns true when the websocket receive loop should
-    /// be exited prematurely.
-    async fn handle_message(&self, msg: ws::Message) -> Result<()> {
+    async fn handle_websocket_message(&self, msg: ws::Message) -> Result<()> {
         match &msg {
             ws::Message::Text(utf8_bytes) => {
-                info!("Got Text message: {}", utf8_bytes.as_str());
+                debug!("Got Text message: {}", utf8_bytes.as_str());
                 if utf8_bytes.as_str() == "terminate" {
                     self.app_state.terminate.cancel();
                 } else if utf8_bytes.as_str() == "kill" {
-                    info!("Killing by dropping socket");
+                    debug!("Killing by dropping socket");
                     self.force_close.cancel();
                 } else if utf8_bytes.as_str() == "close" {
-                    info!("Closing by sending close message");
+                    debug!("Closing by sending close message");
                     sleep(Duration::from_secs(5)).await;
                     self.disconnect(1001, "close").await;
                 } else if utf8_bytes.as_str() == "cterm" {
-                    info!("Closing by sending close message then terminating");
+                    debug!("Closing by sending close message then terminating");
                     self.disconnect(1001, "cterm").await;
                     self.app_state.terminate.cancel();
                 } else {
-                    // TODO: decode message here using serde and call into 
-                    // doc provider to get doc or something like that
-                    self.sink.lock().await.send(msg).await?;
+                    let collab_msg: CollabMessageC2S = serde_json::from_str(utf8_bytes.as_str())
+                        .context("message parsing failed")?;
+                    self.handle_collab_message(collab_msg)
+                        .await
+                        .context("message handler failed")?;
                 }
             }
             axum::extract::ws::Message::Binary(bytes) => {
@@ -153,6 +157,65 @@ impl ClientRepr {
             }
         }
 
+        Ok(())
+    }
+
+    async fn handle_collab_message(&self, msg: CollabMessageC2S) -> Result<()> {
+        info!("Got collab message: {msg:?}");
+        match msg {
+            CollabMessageC2S::GetDoc { req_id, doc_id } => {
+                self.send_message(CollabMessageS2C::GetDocResp {
+                    req_id,
+                    doc_id,
+                    replica_id: self.client_id,
+                })
+                .await?;
+                debug!("Sent doc request response");
+            }
+            CollabMessageC2S::SyncStep1(SyncStep1Inner {
+                doc_id,
+                state_vector,
+            }) => {
+                // compute update for peer and our state vector
+                let (update, our_sv) = {
+                    let state_vector = StateVector::decode_v1(&state_vector.as_slice()).context("failed to decode state vector")?;
+                    
+                    let doc = self.doc_provider.get_doc_by_id(doc_id);
+                    let ydoc = doc.ydoc.lock().map_err(|_| CollabError::LockFailed)?;
+                    let txn = ydoc.transact().await;
+                    
+                    (txn.encode_diff_v1(&state_vector),
+                    txn.state_vector().encode_v1())
+                };
+                // send missing updates to peer in sync step 2
+                self.send_message(CollabMessageS2C::SyncStep2(SyncStep2Inner {
+                    doc_id: doc_id,
+                    update
+                })).await.context("failed to send sync step 2 in response to sync step 1")?;
+
+                // immediately initiate sync step 1 from our side as well to get missing updates from peer
+                self.send_message(CollabMessageS2C::SyncStep1(SyncStep1Inner {
+                    doc_id: doc_id,
+                    state_vector: our_sv
+                })).await.context("failed to send sync step 2 in response to sync step 1")?;
+            }
+            CollabMessageC2S::SyncStep2(sync_step2_inner) => {
+                // TODO: continue here integrating update (same with sync update)
+                todo!()
+            },
+            CollabMessageC2S::SyncUpdate(sync_update_inner) => todo!(),
+        }
+        Ok(())
+    }
+
+    async fn send_message(&self, msg: CollabMessageS2C) -> Result<()> {
+        let text = serde_json::to_string(&msg).context("message serialization failed")?;
+        self.sink
+            .lock()
+            .await
+            .send(text.into())
+            .await
+            .context("message transmission failed")?;
         Ok(())
     }
 

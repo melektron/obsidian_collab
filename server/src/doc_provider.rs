@@ -14,7 +14,7 @@ use log::{debug, info};
 use uuid::{Uuid, uuid};
 use yrs::{AsyncTransact, Doc, GetString, ReadTxn, Text, TextRef, updates::encoder::Encode};
 
-use crate::{app::AppState, collab_proto::CollabMessage};
+use crate::{app::AppState, collab_proto::{CollabMessageS2C, SyncStep1Inner}};
 
 /*/
 #[derive(Error, Debug)]
@@ -111,11 +111,12 @@ impl DocProvider {
         let encoded = sv2.encode_v1();
         debug!("State: {:#?}", sv2);
 
+
         info!("now the json...");
-        let msg = CollabMessage::YSync {
+        let msg = CollabMessageS2C::YSync(SyncStep1Inner {
             doc_id: DOC_ID.clone(),
             ysync_message: encoded
-        };
+        });
         let as_json = serde_json::to_string(&msg)?;
         debug!("got json: {as_json}");
 
