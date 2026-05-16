@@ -18,10 +18,10 @@ import { debugViewPlugin, debugStateField } from "./editor/debug_view_plugin";
 import { CollabSettings, DEFAULT_SETTINGS, CollabSettingTab } from "./settings";
 import { DebugNotice, ErrorNotice, InfoNotice, WarningNotice } from "./ui/static_components";
 import { DocResolver, docResolverFacet } from "./doc_resolver";
-import { ySync } from "./editor/y-sync";
+import { editableCompartment, collabSyncPlugin } from "./editor/collab_sync_plugin";
 import { CollabDebugView, VIEW_TYPE_COLLAB_DEBUG_VIEW } from "./ui/debug_view";
 import { ConnectionProvider } from "./connection_provider";
-import { CtaModal } from "./ui/modals";
+import { ChoiceModal, CtaModal } from "./ui/modals";
 
 
 
@@ -61,6 +61,26 @@ export default class ObsidianCollabPlugin extends Plugin {
                 this.activateDebugView();
             }
         });
+
+
+        // register editor extensions to integrate with codemirror
+        this.editor_extensions = [
+            //debugViewPlugin,
+            //debugStateField,
+            // provide access to the required subsystems to all editors
+            docResolverFacet.of(this.resolver),
+            // add collab sync plugin to all editors
+            collabSyncPlugin,
+            // make all editors readonly by default, only enabling
+            // editing if collab is either fully initialized or determined
+            // to not be active for a certain editor.
+            editableCompartment.of([
+                EditorState.readOnly.of(true)
+            ])
+            //yCollab(ytext, undefined, { undoManager: false })
+        ];
+        this.registerEditorExtension(this.editor_extensions);
+
 
         /**
          * == Experimentation Section ==
@@ -107,13 +127,6 @@ export default class ObsidianCollabPlugin extends Plugin {
                 new DebugNotice("Test Debug notice triggered by command");
             }
         });
-        this.addCommand({
-            id: "sp",
-            name: "Open sample modal (simple)",
-            callback: () => {
-                new SampleModal(this.app).open();
-            }
-        });
         // This adds an editor command that can perform some operation on the current editor instance
         this.addCommand({
             id: "sample-editor-command",
@@ -123,10 +136,17 @@ export default class ObsidianCollabPlugin extends Plugin {
                 editor.replaceSelection("Sample Editor Command2");
             }
         });
+        this.addCommand({
+            id: "sp",
+            name: "Open sample modal (simple)",
+            callback: () => {
+                new SampleModal(this.app).open();
+            }
+        });
         // This adds a complex command that can check whether the current state of the app allows execution of the command
         this.addCommand({
             id: "open-sample-modal-complex",
-            name: "Open sample modal (complex)",
+            name: "Open CtaModal (complex)",
             checkCallback: (checking: boolean) => {
                 // Conditions to check
                 const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -151,6 +171,20 @@ export default class ObsidianCollabPlugin extends Plugin {
                     // This command will only show up in Command Palette when the check function returns true
                     return true;
                 }
+            }
+        });
+        this.addCommand({
+            id: "sp",
+            name: "Open ChoiceModal",
+            callback: async () => {
+                const result = await new ChoiceModal<1 | 2 | 3>(this.app)
+                    .setTitle("Choose wisely")
+                    .setContent("You have multiple options, which one do you want?")
+                    .addOption("", "Option 1", 1)
+                    .addOption("mod-cta", "Option 2", 2, true)
+                    .addOption("", "Option 3", 3)
+                    .prompt()
+                new DebugNotice(`You chose: ${result}`)
             }
         });
 
@@ -233,18 +267,6 @@ export default class ObsidianCollabPlugin extends Plugin {
         this.registerObsidianProtocolHandler("collab", (params) => {
             params.action
         });
-
-
-
-        this.editor_extensions = [
-            //debugViewPlugin,
-            //debugStateField,
-            docResolverFacet.of(this.resolver),
-            ySync,
-            EditorState.readOnly.of(true),
-            //yCollab(ytext, undefined, { undoManager: false })
-        ];
-        this.registerEditorExtension(this.editor_extensions);
 
         loadingNotice.appendMessage(" Done.").hideAfter(2);
     }

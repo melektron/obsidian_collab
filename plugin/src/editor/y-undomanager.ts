@@ -2,7 +2,7 @@ import * as Y from 'yjs' // eslint-disable-line
 import * as cmState from '@codemirror/state'
 
 import * as cmView from '@codemirror/view'
-import { ySyncFacet, ySyncAnnotation } from './y-sync.js'
+import { ySyncFacet, collabSyncOriginAnnotation } from './collab_sync_plugin.js'
 import { YRange } from './y-range.js' // eslint-disable-line
 import { createMutex } from 'lib0/mutex'
 
@@ -108,7 +108,7 @@ class YUndoManagerPluginValue {
    * @param {cmView.ViewUpdate} update
    */
   update (update) {
-    if (update.selectionSet && (update.transactions.length === 0 || update.transactions[0].annotation(ySyncAnnotation) !== this.syncConf)) {
+    if (update.selectionSet && (update.transactions.length === 0 || update.transactions[0].annotation(collabSyncOriginAnnotation) !== this.syncConf)) {
       // This only works when YUndoManagerPlugin is included before the sync plugin
       this._storeSelection()
     }

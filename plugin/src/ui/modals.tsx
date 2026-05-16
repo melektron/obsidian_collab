@@ -106,7 +106,10 @@ export class CtaModal extends ConfirmationModal {
 
     constructor(app: App) {
         super(app)
-        this.scope.register([], "Enter", this.accept.bind(this))
+        this.scope.register([], "Enter", (evt, ctx) => {
+            this.accept()
+            this.close()
+        })
     }
 
     /**
@@ -148,5 +151,80 @@ export class CtaModal extends ConfirmationModal {
     override onClose() {
         super.onClose()
         this.cancel()
+    }
+}
+
+/**
+ * Modal presenting the user with a choice of multiple actions.
+ * Only one action can be selected.
+ * None of them musst be a CtA, but can be if desired.
+ */
+export class ChoiceModal<T> extends ConfirmationModal {
+    protected options: {
+        cls: string,
+        text: string,
+        isCta: boolean,
+        value: T | null
+    }[] = []
+    promise?: Promise<T | null>
+    resolve?: (value: T | null | PromiseLike<T | null>) => void
+
+    constructor(app: App) {
+        super(app)
+    }
+
+    /**
+     * Adds an option for the user to select
+     * @param cls additional class(es) for the button
+     * @param text button text
+     * @param value value to resolve to should this be chosen
+     * @param isCta whether this option is the default action
+     */
+    addOption(cls: string, text: string, value: T | null, isCta: boolean = false) {
+        this.options.push({
+            cls,
+            text,
+            isCta,
+            value,
+        })
+        return this
+    }
+
+    override onOpen() {
+        this.promise = new Promise((resolve) => {
+            this.resolve = resolve
+        })
+    }
+
+    protected handleChoice(value: T | null) {
+        if (this.resolve) this.resolve(value)
+    }
+    
+    /**
+     * Shows the Call-to-action modal and prompts the user this way.
+     * @returns promise that resolves to true if the Cta action
+     * was used or false if the modal was canceled.
+     */
+    prompt(): Promise<T | null> {
+        for (const option of this.options) {
+            this.addButton(
+                option.cls, 
+                option.text,
+                (_, value = option.value) => this.handleChoice(value)
+            )
+            if (option.isCta) {
+                this.scope.register([], "Enter", (evt, ctx, value = option.value) => {
+                    this.handleChoice(value)
+                    this.close()    // buttons call close automatically
+                })
+            }
+        }
+        this.open()
+        return this.promise!    // this.open() creates the promise through onOpen()
+    }
+    
+    override onClose() {
+        super.onClose()
+        this.handleChoice(null)
     }
 }

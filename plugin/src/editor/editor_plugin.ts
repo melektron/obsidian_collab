@@ -4,12 +4,12 @@ import * as cmView from '@codemirror/view'
 import * as cmState from '@codemirror/state' // eslint-disable-line
 
 import { YRange } from './y-range.js'
-import { ySync, ySyncFacet, YSyncConfig } from './y-sync.js'
+import { collabSyncPlugin, ySyncFacet, YSyncConfig } from './collab_sync_plugin.js'
 import { yRemoteSelections, yRemoteSelectionsTheme } from './y-remote-selections.js'
 import { yUndoManager, yUndoManagerFacet, YUndoManagerConfig, undo, redo, yUndoManagerKeymap } from './y-undomanager.js'
 import { Awareness } from 'y-protocols/awareness.js'
 
-export { YRange, yRemoteSelections, yRemoteSelectionsTheme, ySync, ySyncFacet, YSyncConfig, yUndoManagerKeymap }
+export { YRange, yRemoteSelections, yRemoteSelectionsTheme, collabSyncPlugin as ySync, ySyncFacet, YSyncConfig, yUndoManagerKeymap }
 
 /**
  * @param {Object} [opts]
@@ -30,7 +30,7 @@ export const yCollab = (
     const ySyncConfig = new YSyncConfig(ytext, awareness)
     const plugins = [
         ySyncFacet.of(ySyncConfig),
-        ySync
+        collabSyncPlugin
     ]
     if (awareness) {
         plugins.push(

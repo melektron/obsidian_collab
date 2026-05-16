@@ -24,10 +24,10 @@ export class DocumentIdentifier {
 }
 
 export class Document {
-    protected crdtDoc: Y.Doc
+    crdtDoc: Y.Doc
     protected localPersistence: IndexeddbPersistence
-    //private _remoteSyncingEnabled: boolean = false;
     #loaded: boolean = false
+    #syncingEnabled: boolean = false;
 
     readonly loadedPromise: Promise<null>
 
@@ -38,7 +38,7 @@ export class Document {
         readonly uuid: string
     ) {
         // create new document
-        this.crdtDoc = new Y.Doc()
+        this.crdtDoc = new Y.Doc()  // TODO: use server specified client ID
         // load document from local indexeddb database
         this.localPersistence = new IndexeddbPersistence(this.uuid, this.crdtDoc)
         this.localPersistence.whenSynced
@@ -57,8 +57,11 @@ export class Document {
         })
     }
 
-    get ready() {
+    get loaded() {
         return this.#loaded
+    }
+    get syncingEnabled() {
+        return this.#syncingEnabled
     }
 
     protected onLoaded() { }
@@ -90,6 +93,22 @@ export class TextDocument extends Document {
 
     protected override onLoaded(): void {
         console.log(`Doc Value: ${this.textType.toString()}`)
+
+        this.textType.observe((e, tr) => {
+            console.log(`${this.uuid} changed: ${this.textType.toString()}`);
+        })
+    }
+
+    /**
+     * replaces the entire text content of the document
+     * with as little changes as possible by applying 
+     * the diff between current doc content and newText.
+     * @note It is recommended to wrap this in a transaction
+     */
+    granularlyReplaceText(newText: string) {
+        // TODO: don't do this, instead create a diff and do a granular update
+        this.textType.delete(0, this.textType.length)
+        this.textType.insert(0, newText)
     }
 }
 
@@ -106,15 +125,6 @@ export class DocResolver {
             ["Untitled 2.md", new DocumentIdentifier("00000000-0000-0000-0000-ffff00000002", new URL("http://localhost:1234/collab"))],
         ])
         this.activeDocs = new Map<string, TextDocument>()
-        let item1 = new TextDocument("id_item1")    // TODO: use proper UUID/GUID (and proper type for it)
-        let item2 = new TextDocument("id_item2")
-
-        item1.textType.observe((e, tr) => {
-            console.log(`Item1 changed`);//: ${item1.textType.toString()}` )
-        })
-        item2.textType.observe((e, tr) => {
-            console.log(`Item2 changed`);//: ${item2.textType.toString()}` )
-        })
     }
 
     resolveTextDocument(path: string): TextDocument | null {
@@ -123,7 +133,7 @@ export class DocResolver {
         if (docId === null) return null;
 
         // check if the document is already active
-        let document = this.activeDocs.get(path) ?? null
+        let document = this.activeDocs.get(docId.uuid) ?? null
         if (document === null) {
             // document is not active, load it from local persistence
             document = new TextDocument(docId.uuid)
