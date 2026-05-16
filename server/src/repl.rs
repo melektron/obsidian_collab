@@ -13,21 +13,20 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use log::info;
 use rustyline_async::{Readline, ReadlineEvent, SharedWriter};
-use yrs::{AsyncTransact, GetString, Text};
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use tokio_util::future::FutureExt;
+use yrs::{AsyncTransact, GetString, Text};
 
 use crate::app::AppState;
 use crate::doc_provider::{DOC_ID, DocProvider};
-use crate::errors::CollabError;
+use crate::webserver::WebServer;
 
 pub fn handle_write_fail(r: Result<(), std::io::Error>) {
     if let Err(e) = r {
         eprintln!("Failed to write to interactive console: {e:?}")
     }
 }
-
 
 fn colorize(color: AnsiColor, text: &str) -> String {
     let style = Style::new().fg_color(Some(color.into()));
@@ -115,25 +114,19 @@ enum ReplCommands {
     Exit,
 
     #[command(alias = "a", about = "Appends text to the document")]
-    Append {
-        text: String,
-    },
+    Append { text: String },
 
     #[command(alias = "i", about = "Inserts text into the document")]
-    Insert {
-        position: u16,
-        text: String,
-    },
+    Insert { position: u16, text: String },
 
     #[command(alias = "d", about = "Deletes a range of text in the document")]
-    Delete {
-        position: u16,
-        len: u16,
-    },
+    Delete { position: u16, len: u16 },
 
     #[command(alias = "p", about = "Prints the current document")]
     Print,
 
+    #[command(alias = "l", about = "Prints a list of all connected clients")]
+    ListClients,
 }
 
 pub type ReplIo = (Readline, SharedWriter);
@@ -141,16 +134,23 @@ pub type ReplIo = (Readline, SharedWriter);
 pub struct Repl {
     app_state: Arc<AppState>,
     doc_provider: Arc<DocProvider>,
+    webserver: Arc<WebServer>,
 
     rl: Mutex<Readline>,
     stdout: SharedWriter,
 }
 
 impl Repl {
-    pub fn new(app_state: &Arc<AppState>, doc_provider: &Arc<DocProvider>, io: ReplIo) -> Self {
+    pub fn new(
+        app_state: &Arc<AppState>,
+        doc_provider: &Arc<DocProvider>,
+        webserver: &Arc<WebServer>,
+        io: ReplIo,
+    ) -> Self {
         Self {
             app_state: app_state.clone(),
             doc_provider: doc_provider.clone(),
+            webserver: webserver.clone(),
             rl: Mutex::new(io.0),
             stdout: io.1,
         }
@@ -244,24 +244,22 @@ impl Repl {
             }
             ReplCommands::Append { text } => {
                 let doc = self.doc_provider.get_doc_by_id(DOC_ID);
-                let ydoc = doc.ydoc.lock().map_err(|_| CollabError::LockFailed)?;
 
-                let mut txn = ydoc.transact_mut().await;
+                let mut txn = doc.ydoc.transact_mut().await;
                 shelloutln!(self, "Before: {}", doc.text.get_string(&txn));
 
                 let old_len = doc.text.len(&txn);
                 doc.text.insert(&mut txn, old_len, text.as_str());
                 txn.commit();
-                
+
                 shelloutln!(self, "After: {}", doc.text.get_string(&txn));
             }
             ReplCommands::Insert { position, text } => {
                 let doc = self.doc_provider.get_doc_by_id(DOC_ID);
-                let ydoc = doc.ydoc.lock().map_err(|_| CollabError::LockFailed)?;
 
-                let mut txn = ydoc.transact_mut().await;
+                let mut txn = doc.ydoc.transact_mut().await;
                 shelloutln!(self, "Before: {}", doc.text.get_string(&txn));
-                
+
                 doc.text.insert(&mut txn, position.into(), text.as_str());
                 txn.commit();
 
@@ -269,22 +267,29 @@ impl Repl {
             }
             ReplCommands::Delete { position, len } => {
                 let doc = self.doc_provider.get_doc_by_id(DOC_ID);
-                let ydoc = doc.ydoc.lock().map_err(|_| CollabError::LockFailed)?;
 
-                let mut txn = ydoc.transact_mut().await;
+                let mut txn = doc.ydoc.transact_mut().await;
                 shelloutln!(self, "Before: {}", doc.text.get_string(&txn));
-                
+
                 doc.text.remove_range(&mut txn, position.into(), len.into());
                 txn.commit();
 
                 shelloutln!(self, "After: {}", doc.text.get_string(&txn));
-
             }
             ReplCommands::Print => {
                 let doc = self.doc_provider.get_doc_by_id(DOC_ID);
-                let ydoc = doc.ydoc.lock().map_err(|_| CollabError::LockFailed)?;
-                let txn = ydoc.transact().await;
+                let txn = doc.ydoc.transact().await;
                 shelloutln!(self, "{}", doc.text.get_string(&txn));
+            }
+
+            ReplCommands::ListClients => {
+                let clients = self.webserver.clients.lock().await;
+                for client in clients.values() {
+                    shelloutln!(self, " - {client}")
+                }
+                if clients.is_empty() {
+                    shelloutln!(self, "currently no active clients");
+                }
             }
         }
 

@@ -1,4 +1,12 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, TAbstractFile, TFile } from "obsidian";
+/*
+ELEKTRON © 2025 - now
+Written by melektron
+www.elektron.work
+25.05.25, 18:58
+
+*/
+
+import { App, Editor, MarkdownView, Modal, Notice, Plugin, Setting, TAbstractFile, TFile, WorkspaceLeaf } from "obsidian";
 import { EditorState, Extension } from "@codemirror/state";
 import { h } from "dom-chef" ;
 import * as random from "lib0/random";
@@ -6,12 +14,14 @@ import * as Y from "yjs";
 import * as awarenessProtocol from "y-protocols/awareness";
 import { WebsocketProvider } from "y-websocket";
 
-import { go } from "./plugin_inst";
 import { debugViewPlugin, debugStateField } from "./editor/debug_view_plugin";
 import { CollabSettings, DEFAULT_SETTINGS, CollabSettingTab } from "./settings";
-import { DebugNotice, ErrorNotice, InfoNotice, WarningNotice } from "./components";
-import { ItemResolver, itemResolverFacet } from "./item_resolver";
+import { DebugNotice, ErrorNotice, InfoNotice, WarningNotice } from "./ui/static_components";
+import { DocResolver, docResolverFacet } from "./doc_resolver";
 import { ySync } from "./editor/y-sync";
+import { CollabDebugView, VIEW_TYPE_COLLAB_DEBUG_VIEW } from "./ui/debug_view";
+import { ConnectionProvider } from "./connection_provider";
+import { CtaModal } from "./ui/modals";
 
 
 
@@ -19,22 +29,42 @@ import { ySync } from "./editor/y-sync";
 
 
 export default class ObsidianCollabPlugin extends Plugin {
-    settings: CollabSettings;
+    settings: CollabSettings = DEFAULT_SETTINGS;
     lastEditor: Editor | undefined;
-    editor_extensions: Extension[];
-    resolver: ItemResolver
+    editor_extensions: Extension[] = [];
+    connection!: ConnectionProvider;
+    resolver!: DocResolver;
 
-
-    
     async onload() {
+        //this.app.emulateMobile();   // @ts-ignore
+        
         let loadingNotice = new InfoNotice("Collab loading...");
 
-        go.plugin_inst = this;
+        // load settings from disk and initialize settings UI
         await this.loadSettings();
-        //this.app.emulateMobile();   // @ts-ignore
+        this.addSettingTab(new CollabSettingTab(this.app, this));
 
-        this.resolver = new ItemResolver()
+        this.connection = new ConnectionProvider(this.settings.serverUrl);
 
+        // application components
+        this.resolver = new DocResolver()
+
+        // load debug view
+        this.registerView(
+            VIEW_TYPE_COLLAB_DEBUG_VIEW,
+            (leaf) => new CollabDebugView(leaf, this.connection)
+        )
+        this.addCommand({
+            id: "show-debug-view",
+            name: "Show the Debug View",
+            callback: async () => {
+                this.activateDebugView();
+            }
+        });
+
+        /**
+         * == Experimentation Section ==
+         */
 
         // This adds a status bar item to the bottom of the app. Does not work on mobile apps.
         const statusBarItemEl = this.addStatusBarItem();
@@ -88,7 +118,7 @@ export default class ObsidianCollabPlugin extends Plugin {
         this.addCommand({
             id: "sample-editor-command",
             name: "Sample editor command",
-            editorCallback: (editor: Editor, view: MarkdownView) => {
+            editorCallback: (editor: Editor, view) => {
                 console.log(editor.getSelection());
                 editor.replaceSelection("Sample Editor Command2");
             }
@@ -104,7 +134,18 @@ export default class ObsidianCollabPlugin extends Plugin {
                     // If checking is true, we"re simply "checking" if the command can be run.
                     // If checking is false, then we want to actually perform the operation.
                     if (!checking) {
-                        new SampleModal(this.app).open();
+                        new CtaModal(this.app)
+                            .setTitle("Are you sure?")
+                            .setContent("This action is destructive. Do you really want to do it?")
+                            .addCheckbox("Don't show again", (ev) => {
+                                const target = ev.target as HTMLInputElement
+                                console.log("don't show again called", target.checked)
+                            })
+                            .setCta("mod-warning", "Yes")
+                            .prompt()
+                            .then((v) => {
+                                new Notice(`Cta result: ${v}`)
+                            })
                     }
 
                     // This command will only show up in Command Palette when the check function returns true
@@ -113,8 +154,6 @@ export default class ObsidianCollabPlugin extends Plugin {
             }
         });
 
-        // This adds a settings tab so the user can configure various aspects of the plugin
-        this.addSettingTab(new CollabSettingTab(this.app, this));
 
         // If the plugin hooks up any global DOM events (on parts of the app that doesn"t belong to this plugin)
         // Using this function will automatically remove the event listener when this plugin is disabled.
@@ -200,7 +239,7 @@ export default class ObsidianCollabPlugin extends Plugin {
         this.editor_extensions = [
             //debugViewPlugin,
             //debugStateField,
-            itemResolverFacet.of(this.resolver),
+            docResolverFacet.of(this.resolver),
             ySync,
             EditorState.readOnly.of(true),
             //yCollab(ytext, undefined, { undoManager: false })
@@ -214,6 +253,26 @@ export default class ObsidianCollabPlugin extends Plugin {
         let unloadingNotice = new InfoNotice("Collab unloading...");
 
         unloadingNotice.appendMessage(" Done.").hideAfter(2);
+    }
+
+    async activateDebugView() {
+        const { workspace } = this.app;
+                
+        let leaf: WorkspaceLeaf | null = null;
+        const leaves = workspace.getLeavesOfType(VIEW_TYPE_COLLAB_DEBUG_VIEW);
+
+        if (leaves.length > 0) {
+            // A leaf with our view already exists, use that
+            leaf = leaves[0];
+        } else {
+            // Our view could not be found in the workspace, create a new leaf
+            // in the right sidebar for it
+            leaf = workspace.getRightLeaf(false)!;
+            await leaf.setViewState({ type: VIEW_TYPE_COLLAB_DEBUG_VIEW, active: true });
+        }
+
+        // "Reveal" the leaf in case it is in a collapsed sidebar
+        workspace.revealLeaf(leaf);
     }
 
     onCreate(file: TAbstractFile) {
@@ -253,4 +312,3 @@ class SampleModal extends Modal {
         contentEl.empty();
     }
 }
-

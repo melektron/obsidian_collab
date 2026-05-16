@@ -18,13 +18,13 @@ because a single connection often accesses multiple documents.
 import * as z from "zod";
 
 
-enum MessageType {
+export enum MessageType {
     GetDoc = "GetDoc",
     GetDocResp = "GetDocResp",
     YSync = "YSync",
 }
 
-const collabMessage = z.discriminatedUnion("mtype", [
+export const collabMessage = z.discriminatedUnion("mtype", [
     z.object({
         mtype: z.literal(MessageType.GetDoc),
         doc_id: z.uuid(),
@@ -41,25 +41,4 @@ const collabMessage = z.discriminatedUnion("mtype", [
         ysync_message: z.string(),
     })
 ]);
-type CollabMessage = z.infer<typeof collabMessage>;
-
-const a = collabMessage.parse({
-    mtype: "GetDoc",
-    doc_id: z.uuid(),
-});
-
-switch (a.mtype) {
-    case MessageType.GetDoc:
-        a
-        break;
-
-    case MessageType.GetDocResp:
-        break;
-
-    case MessageType.YSync:
-        break;
-
-    default:
-        break;
-}
-
+export type CollabMessage = z.infer<typeof collabMessage>;

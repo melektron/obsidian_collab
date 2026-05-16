@@ -9,22 +9,22 @@ Plugin Settings
 
 
 import { App, PluginSettingTab, Setting } from "obsidian";
-import type ObsidianCollabPlugin from "./main"
+import type CollabPlugin from "./main"
 
 
 export interface CollabSettings {
-    mySetting: string;
+    serverUrl: string;
 }
 
 export const DEFAULT_SETTINGS: CollabSettings = {
-    mySetting: "default"
+    serverUrl: "ws://localhost:1234/collab"
 }
 
 
 export class CollabSettingTab extends PluginSettingTab {
-    plugin: ObsidianCollabPlugin;
+    plugin: CollabPlugin;
 
-    constructor(app: App, plugin: ObsidianCollabPlugin) {
+    constructor(app: App, plugin: CollabPlugin) {
         super(app, plugin);
         this.plugin = plugin;
     }
@@ -35,14 +35,17 @@ export class CollabSettingTab extends PluginSettingTab {
         containerEl.empty();
 
         new Setting(containerEl)
-            .setName("Setting #1")
-            .setDesc("It\"s a secret")
+            .setName("Server URL")
+            .setDesc("URL to the collab server to connect to")
             .addText(text => text
-                .setPlaceholder("Enter your secret")
-                .setValue(this.plugin.settings.mySetting)
+                .setPlaceholder("wss://collab.ppc.social/collab")
+                .setValue(this.plugin.settings.serverUrl)
                 .onChange(async (value) => {
-                    this.plugin.settings.mySetting = value;
+                    this.plugin.settings.serverUrl = value;
                     await this.plugin.saveSettings();
                 }));
+
+        // TODO: maybe use this in the future if more complicated settings are needed:
+        // https://github.com/Ssentiago/react-obsidian-setting
     }
 }

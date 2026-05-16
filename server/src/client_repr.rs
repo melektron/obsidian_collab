@@ -7,7 +7,7 @@ www.elektron.work
 Structure representing a collab client
 */
 
-use std::{collections::HashSet, os::linux::raw::stat, sync::Arc, time::Duration};
+use std::{collections::HashSet, fmt::Display, net::IpAddr, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use axum::extract::ws;
@@ -16,17 +16,15 @@ use futures::{
     stream::{SplitSink, SplitStream},
 };
 use log::{debug, info, warn};
-use serde::{Deserialize, Serialize};
 use tokio::{sync::Mutex, time::sleep};
-use tokio_util::{future::FutureExt, sync::CancellationToken};
+use tokio_util::{future::FutureExt, sync::{CancellationToken, WaitForCancellationFuture}};
 use uuid::Uuid;
 use yrs::{AsyncTransact, ReadTxn, StateVector, updates::{decoder::Decode, encoder::Encode}};
 
 use crate::{
     app::AppState,
-    collab_proto::{CollabMessageC2S, CollabMessageS2C, SyncStep1Inner, SyncStep2Inner},
+    collab_proto::{CollabMessageC2S, CollabMessageS2C, SyncStep1Inner, SyncStep2Inner, SyncUpdateInner},
     doc_provider::DocProvider,
-    errors::CollabError,
 };
 
 type WsSink = SplitSink<ws::WebSocket, ws::Message>;
@@ -38,14 +36,16 @@ pub struct ClientRepr {
     app_state: Arc<AppState>,
     doc_provider: Arc<DocProvider>,
 
+    ip_addr: IpAddr,
+    sink: Mutex<WsSink>,
+    stream: Mutex<WsStream>,
+
     // unique identifier for the client to use as the
     // CRDT client ID (which should be called replica ID).
     // TODO: maybe we want to transition to per-document replica-ids
     // to allow for improved scalability?
     client_id: u32,
 
-    sink: Mutex<WsSink>,
-    stream: Mutex<WsStream>,
     active_docs: HashSet<Uuid>,
 
     // cancellation token to forcefully stop all processing and
@@ -60,8 +60,9 @@ impl ClientRepr {
     pub fn new(
         app_state: &Arc<AppState>,
         doc_provider: &Arc<DocProvider>,
-        client_id: u32,
+        ip_addr: IpAddr,
         socket: ws::WebSocket,
+        client_id: u32,
     ) -> Self {
         let (sink, stream) = socket.split();
 
@@ -69,10 +70,12 @@ impl ClientRepr {
             app_state: app_state.clone(),
             doc_provider: doc_provider.clone(),
 
-            client_id,
-
+            ip_addr,
             sink: Mutex::new(sink),
             stream: Mutex::new(stream),
+
+            client_id,
+
             active_docs: HashSet::new(),
 
             force_close: CancellationToken::new(),
@@ -181,8 +184,7 @@ impl ClientRepr {
                     let state_vector = StateVector::decode_v1(&state_vector.as_slice()).context("failed to decode state vector")?;
                     
                     let doc = self.doc_provider.get_doc_by_id(doc_id);
-                    let ydoc = doc.ydoc.lock().map_err(|_| CollabError::LockFailed)?;
-                    let txn = ydoc.transact().await;
+                    let txn = doc.ydoc.transact().await;
                     
                     (txn.encode_diff_v1(&state_vector),
                     txn.state_vector().encode_v1())
@@ -199,11 +201,15 @@ impl ClientRepr {
                     state_vector: our_sv
                 })).await.context("failed to send sync step 2 in response to sync step 1")?;
             }
-            CollabMessageC2S::SyncStep2(sync_step2_inner) => {
-                // TODO: continue here integrating update (same with sync update)
-                todo!()
+            CollabMessageC2S::SyncStep2(SyncStep2Inner { doc_id, update }) => {
+                let doc = self.doc_provider.get_doc_by_id(doc_id);
+                doc.integrate_update_v1(update.as_slice()).await.context("integrate sync step 2")?;
+                // TODO: maybe respond with some sort of sync done indicator (a la SyncStepDone)?
             },
-            CollabMessageC2S::SyncUpdate(sync_update_inner) => todo!(),
+            CollabMessageC2S::SyncUpdate(SyncUpdateInner { doc_id, update }) => {
+                let doc = self.doc_provider.get_doc_by_id(doc_id);
+                doc.integrate_update_v1(update.as_slice()).await.context("integrate sync update")?;
+            },
         }
         Ok(())
     }
@@ -222,7 +228,7 @@ impl ClientRepr {
     /// tries to cleanly disconnect the client.
     /// If the disconnect handshake times out, the connection
     /// is forcefully closed by canceling `self.force_close`.
-    async fn disconnect(&self, code: u16, reason: &str) {
+    pub async fn disconnect(&self, code: u16, reason: &str) {
         if let Err(e) = self
             .sink
             .lock()
@@ -236,7 +242,7 @@ impl ClientRepr {
             warn!("Failed to send close message: {e}")
         }
 
-        // force close the client if it disconnect handshake times out
+        // force close the client if the disconnect handshake times out
         tokio::spawn({
             let has_closed = self.has_closed.clone();
             let force_close = self.force_close.clone();
@@ -248,5 +254,19 @@ impl ClientRepr {
                 }
             }
         });
+    }
+
+    /**
+     * returns a future that resolves when the client connection has been closed
+     * (cleanly or not).
+     */
+    pub fn closed(&self) -> WaitForCancellationFuture<'_> {
+        self.has_closed.cancelled()
+    }
+}
+
+impl Display for ClientRepr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CollabClient {} @{}, {} active documents", self.client_id, self.ip_addr, self.active_docs.len())
     }
 }

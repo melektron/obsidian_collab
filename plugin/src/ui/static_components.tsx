@@ -1,7 +1,30 @@
+/*
+ELEKTRON © 2025 - now
+Written by melektron
+www.elektron.work
+25.05.25, 18:58
 
+Components for re-use
+
+*/
+
+// this file uses dom-chef for static rendering and is not reactive.
+/** @jsxRuntime classic */
+/** @jsx h */
+/** @jsxFrag DocumentFragment */
 
 import { addIcon, Notice, setIcon } from "obsidian";
 import { h } from "dom-chef";
+
+// this is needed to fix intellisense for non-reactive JSX in 
+// a partially reactive app.
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      [elemName: string]: any;
+    }
+  }
+}
 
 interface IconProps {
     iconId: string
@@ -91,25 +114,25 @@ export class NoticeWithIcon extends Notice {
 
 export class ErrorNotice extends NoticeWithIcon {
     constructor(message: string | DocumentFragment) {
-        super(message, 0, "circle-x", "collab_error_notice")
+        super(message, 0, "circle-x", "collab-error-notice")
     }
 }
 
 export class WarningNotice extends NoticeWithIcon {
     constructor(message: string | DocumentFragment) {
-        super(message, 0, "triangle-alert", "collab_warning_notice")
+        super(message, 0, "triangle-alert", "collab-warning-notice")
     }
 }
 
 export class InfoNotice extends NoticeWithIcon {
     constructor(message: string | DocumentFragment) {
         console.log("info notice construct")
-        super(message, 0, "info", "collab_info_notice")
+        super(message, 0, "info", "collab-info-notice")
     }
 }
 
 export class DebugNotice extends NoticeWithIcon {
     constructor(message: string | DocumentFragment) {
-        super(message, 0, "bug", "collab_debug_notice")
+        super(message, 0, "bug", "collab-debug-notice")
     }
 }

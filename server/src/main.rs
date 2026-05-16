@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 mod app;
 mod args;
 mod client_repr;
@@ -6,6 +8,7 @@ mod doc_provider;
 mod repl;
 mod webserver;
 mod errors;
+mod utils;
 
 use std::{
     io::{IsTerminal},

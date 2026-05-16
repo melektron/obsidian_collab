@@ -7,13 +7,17 @@ www.elektron.work
 CodeMirror view plugin used for debugging
 */
 
+// this file uses dom-chef for static rendering and is not reactive.
+/** @jsxRuntime classic */
+/** @jsx h */
+/** @jsxFrag DocumentFragment */
+
 import { TFile, editorInfoField } from 'obsidian';
 import * as cm_view from "@codemirror/view";
 import * as cm_state from '@codemirror/state';
 import { h } from "dom-chef" ;
 
-import { ErrorNotice } from "../components";
-import { go } from "../plugin_inst";
+import { ErrorNotice } from "../ui/static_components";
 
 
 let editor_count: number = 0;
@@ -75,12 +79,12 @@ export const debugStateField = cm_state.StateField.define<DebugStateField | unde
 export class DebugViewPlugin implements cm_view.PluginValue {
     view: cm_view.EditorView;
 
-    counter_element: HTMLElement;
+    counter_element: HTMLElement | null = null;
     
     constructor(view: cm_view.EditorView) {
+        this.view = view;
         let field = view.state.field(debugStateField, false);
         if (field === undefined) return;
-        this.view = view;
 
         field.logw("hello from view plugin");
 
@@ -111,7 +115,7 @@ export class DebugViewPlugin implements cm_view.PluginValue {
 
         if (update.docChanged) {
             //field.loge("Doc changed.", update.changes);
-            this.counter_element.textContent = update.state.doc.length + "";
+            this.counter_element!.textContent = update.state.doc.length + "";
         }
     }
 

@@ -9,10 +9,10 @@ Subsystem for storing and manipulating CRDT Documents
 
 use std::{collections::HashMap, sync::{Arc, Mutex}};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use log::{debug, info};
 use uuid::{Uuid, uuid};
-use yrs::{AsyncTransact, Doc, GetString, ReadTxn, Text, TextRef, updates::encoder::Encode};
+use yrs::{AsyncTransact, Doc, GetString, ReadTxn, Text, TextRef, updates::{decoder::Decode, encoder::Encode}};
 
 use crate::{app::AppState, collab_proto::{CollabMessageS2C, SyncStep1Inner}};
 
@@ -36,7 +36,7 @@ pub const DOC_ID: Uuid = uuid!("00000000-0000-0000-0000-ffff00000000");
 
 
 pub struct DocWrapper {
-    pub ydoc: Mutex<Doc>,
+    pub ydoc: Doc,
     // TODO: This stores a pointer to something owned by teh above document. 
     // is it even safe to keep here? does the doc need external Pinning?
     pub text: TextRef
@@ -44,16 +44,29 @@ pub struct DocWrapper {
 
 impl DocWrapper {
     pub fn new() -> Self {
-        let ydoc = Mutex::new(Doc::new());
+        let ydoc = Doc::new();
 
-        // TODO: maybe use a manual, async implementation for this in the future:
-        // we use unwrap here... must never fail during init
-        let text = ydoc.try_lock().unwrap().get_or_insert_text("item_text");
+        // Currently this acquires a lock synchronously, which should 
+        // not be a problem bc this is the only doc reference
+        // TODO: maybe use a manual, async implementation for this in the future.
+        let text = ydoc.get_or_insert_text("text-file-content");
 
         Self {
             ydoc,
             text
         }
+    }
+
+    /// Decodes an update in v1 format and integrates it.
+    /// Update may fail to decode or integrate.
+    pub async fn integrate_update_v1(&self, update: &[u8]) -> Result<()> {
+        // decode and apply the provided update
+        let mut txn = self.ydoc.transact_mut().await;
+
+        let update = yrs::Update::decode_v1(update).context("failed to decode update")?;
+        txn.apply_update(update).context("update integration failed")?;
+        
+        Ok(())
     }
 }
 
@@ -113,9 +126,9 @@ impl DocProvider {
 
 
         info!("now the json...");
-        let msg = CollabMessageS2C::YSync(SyncStep1Inner {
+        let msg = CollabMessageS2C::SyncStep1(SyncStep1Inner {
             doc_id: DOC_ID.clone(),
-            ysync_message: encoded
+            state_vector: encoded
         });
         let as_json = serde_json::to_string(&msg)?;
         debug!("got json: {as_json}");

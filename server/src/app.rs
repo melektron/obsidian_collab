@@ -22,11 +22,11 @@ use crate::{
 
 pub struct AppState {
     pub terminate: CancellationToken,
+    pub args: Args,
 }
 
 pub struct App {
-    args: Args,
-    _app_state: Arc<AppState>,
+    app_state: Arc<AppState>,
     doc_provider: Arc<DocProvider>,
     web_server: Arc<WebServer>,
     repl: Option<Arc<Repl>>,
@@ -39,6 +39,7 @@ impl App {
         repl_io: Option<ReplIo>,
     ) -> Self {
         let app_state = Arc::new(AppState {
+            args,
             terminate: CancellationToken::new(),
         });
 
@@ -47,11 +48,11 @@ impl App {
         let web_server = Arc::new(WebServer::new(&app_state, &doc_provider));
 
         // only create repl if it exists
-        let repl = repl_io.map(|io| Arc::new(Repl::new(&app_state, &doc_provider, io)));
+        let repl =
+            repl_io.map(|io| Arc::new(Repl::new(&app_state, &doc_provider, &web_server, io)));
 
         Self {
-            args,
-            _app_state: app_state,
+            app_state,
             doc_provider,
             web_server,
             repl,
@@ -59,7 +60,10 @@ impl App {
     }
 
     pub async fn run(&self) -> Result<()> {
-        info!("Storing persistent data in {}", self.args.data.display());
+        info!(
+            "Storing persistent data in {}",
+            self.app_state.args.data.display()
+        );
 
         // run all components until all complete or one fails.
         // run repl only if it it is available

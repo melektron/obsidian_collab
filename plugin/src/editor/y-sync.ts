@@ -16,27 +16,27 @@ import { Awareness } from 'y-protocols/awareness.js';
 
 // TODO: use this to determine the path of a document opened in an editor
 import { editorInfoField, Notice, TFile } from 'obsidian';
-import { ItemResolver, itemResolverFacet, TextItem } from 'src/item_resolver.js';
-import { ErrorNotice } from 'src/components.js';
+import { DocResolver, docResolverFacet, TextDocument } from 'src/doc_resolver.js';
+import { ErrorNotice, WarningNotice } from 'src/ui/static_components.js';
 
 
 export const ySyncAnnotation = cm_state.Annotation.define()
 
 
-class YSyncPluginValue implements cm_view.PluginValue{
+class YSyncPluginValue implements cm_view.PluginValue {
     editorView: cm_view.EditorView;
-    resolver: ItemResolver;
+    resolver: DocResolver;
     active: boolean = false;    // whether the sync plugin is active in this editor
     file: TFile;
     syncing: boolean = false;   // whether syncing between CRDT and editor is currently enabled
-    item: TextItem | null;
+    item: TextDocument | null;
     ytext: Y.Text;
 
     constructor(editorView: cm_view.EditorView) {
         this.active = false;
 
         this.editorView = editorView
-        this.resolver = editorView.state.facet(itemResolverFacet)
+        this.resolver = editorView.state.facet(docResolverFacet)
         
         let editorInfo = this.editorView.state.field(editorInfoField);
         if (editorInfo.file) {
@@ -47,9 +47,9 @@ class YSyncPluginValue implements cm_view.PluginValue{
             return;
         }
         
-        this.item = this.resolver.resolveTextItem(this.file.path)
+        this.item = this.resolver.resolveTextDocument(this.file.path)
         if (this.item === null) {
-            new ErrorNotice("Not associated with any item");
+            new ErrorNotice("Not associated with any item").hideAfter(3);
             return;
         }
         this.ytext = this.item.textType;
@@ -60,9 +60,10 @@ class YSyncPluginValue implements cm_view.PluginValue{
         
         // TODO: move this to a separate function and improve it a lot
         if (this.ytext.toString() !== this.editorView.state.doc.toString()) {
-            new ErrorNotice("File differs from item! Overwriting item with file value");
+            new WarningNotice("File differs from item! Overwriting item with file value").hideAfter(3);
             editorInfo.editor?.blur()
             this.ytext.doc?.transact((tr) => {
+                // TODO: don't do this, instead create a diff and do a granular update
                 this.ytext.delete(0, this.ytext.length)
                 this.ytext.insert(0, this.editorView.state.doc.toString())
             }, this)

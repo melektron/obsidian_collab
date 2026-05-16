@@ -8,16 +8,41 @@ If your plugin does not need CSS, delete this file.
 */
 
 /* style error notices with red background */ 
-div.notice:has(div > span.collab_error_notice) {
+div.notice:has(div > span.collab-error-notice) {
     background-color: rgb(169, 0, 0);
 }
-div.notice:has(div > span.collab_warning_notice) {
+div.notice:has(div > span.collab-warning-notice) {
     background-color: rgb(250, 160, 0);
 }
-div.notice:has(div > span.collab_info_notice) {
+div.notice:has(div > span.collab-info-notice) {
     /* this is just the default black */
     background-color: auto;
 }
-div.notice:has(div > span.collab_debug_notice) {
+div.notice:has(div > span.collab-debug-notice) {
     background-color: purple;
+}
+
+.collab-button:active {
+    transform: translateY(1px) scale(0.99);
+}
+
+/*
+this is missing from normal obsidian, so i will add it for our buttons.
+For error variant, it is provided by default in button.mod-destructive
+*/
+.collab-button.mod-success {
+    --text-color: var(--text-success)
+}
+
+
+.collab-spin-1s {
+    animation: collab-spin 1s linear infinite;
+}
+@keyframes collab-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
