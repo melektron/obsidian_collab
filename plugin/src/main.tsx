@@ -17,7 +17,7 @@ import { WebsocketProvider } from "y-websocket";
 import { debugViewPlugin, debugStateField } from "./editor/debug_view_plugin";
 import { CollabSettings, DEFAULT_SETTINGS, CollabSettingTab } from "./settings";
 import { DebugNotice, ErrorNotice, InfoNotice, WarningNotice } from "./ui/static_components";
-import { DocResolver, docResolverFacet } from "./doc_resolver";
+import { DocManager, docManagerFacet } from "./doc_manager";
 import { editableCompartment, collabSyncPlugin } from "./editor/collab_sync_plugin";
 import { CollabDebugView, VIEW_TYPE_COLLAB_DEBUG_VIEW } from "./ui/debug_view";
 import { ConnectionProvider } from "./connection_provider";
@@ -31,9 +31,9 @@ import { ChoiceModal, CtaModal } from "./ui/modals";
 export default class ObsidianCollabPlugin extends Plugin {
     settings: CollabSettings = DEFAULT_SETTINGS;
     lastEditor: Editor | undefined;
-    editor_extensions: Extension[] = [];
+    editorExtensions: Extension[] = [];
     connection!: ConnectionProvider;
-    resolver!: DocResolver;
+    docManager!: DocManager;
 
     async onload() {
         //this.app.emulateMobile();   // @ts-ignore
@@ -47,7 +47,7 @@ export default class ObsidianCollabPlugin extends Plugin {
         this.connection = new ConnectionProvider(this.settings.serverUrl);
 
         // application components
-        this.resolver = new DocResolver()
+        this.docManager = new DocManager()
 
         // load debug view
         this.registerView(
@@ -64,11 +64,11 @@ export default class ObsidianCollabPlugin extends Plugin {
 
 
         // register editor extensions to integrate with codemirror
-        this.editor_extensions = [
+        this.editorExtensions = [
             //debugViewPlugin,
             //debugStateField,
             // provide access to the required subsystems to all editors
-            docResolverFacet.of(this.resolver),
+            docManagerFacet.of(this.docManager),
             // add collab sync plugin to all editors
             collabSyncPlugin,
             // make all editors readonly by default, only enabling
@@ -79,7 +79,7 @@ export default class ObsidianCollabPlugin extends Plugin {
             ])
             //yCollab(ytext, undefined, { undoManager: false })
         ];
-        this.registerEditorExtension(this.editor_extensions);
+        this.registerEditorExtension(this.editorExtensions);
 
 
         /**

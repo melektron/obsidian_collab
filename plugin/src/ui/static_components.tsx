@@ -39,11 +39,20 @@ const Icon = (props: IconProps) => {
     // we do a questionable botch to override the setAttribute method because props
     // are not actually passed to components in "dom-chef". We only get the defaults
     // if specified, the others are instead applied using "setAttribute"
-    const old_setAttribute = ret.setAttribute
+    const old_setAttribute = ret.setAttribute.bind(ret)
     ret.setAttribute = (qualifiedName: string, value: string) => {
-        if (qualifiedName === "iconId")
-            setIcon(ret, value);
-        else
+        if (qualifiedName === "iconId") {
+            if (value === "collab-icon-loading") {
+                // special case for our custom loading icon
+                // that looks like obsidian's built-in loader
+                ret.addClass("collab-icon-loading")
+            } else {
+                // otherwise use obsidian's default icon helper to
+                // set an icon from lucide
+                setIcon(ret, value);
+                ret.removeClass("collab-icon-loading")
+            }
+        } else
             old_setAttribute(qualifiedName, value);
     }
     return ret;
@@ -51,6 +60,7 @@ const Icon = (props: IconProps) => {
 
 export class NoticeWithIcon extends Notice {
 
+    iconEl: HTMLElement 
     /**
      * Element contained inside the icon wrapper
      * (added by NoticeWithIcon)
@@ -64,18 +74,21 @@ export class NoticeWithIcon extends Notice {
             {message}
         </span>
 
+        let icon = <Icon iconId={iconId} style={{
+            marginRight: "0.3rem"
+        }} />
+
         let element = <div style={{
             display: "flex",
             flexDirection: "row",
             alignItems: "center"
         }}>
-            <Icon iconId={iconId} style={{
-                marginRight: "0.3rem"
-            }} />
+            {icon}
             {container}
         </div>;
 
         super(element, duration);
+        this.iconEl = icon
         this.innerContainerEl = container;
     }
 
@@ -134,5 +147,22 @@ export class InfoNotice extends NoticeWithIcon {
 export class DebugNotice extends NoticeWithIcon {
     constructor(message: string | DocumentFragment) {
         super(message, 0, "bug", "collab-debug-notice")
+    }
+}
+
+export class LoadingNotice extends NoticeWithIcon {
+    constructor(message: string | DocumentFragment) {
+        console.log("loading notice construct")
+        super(message, 0, "collab-icon-loading", "collab-loading-notice")
+    }
+
+    completed() {
+        this.iconEl.setAttribute("iconId", "circle-check")
+        return this
+    }
+
+    failed() {
+        this.iconEl.setAttribute("iconId", "circle-x")
+        return this
     }
 }

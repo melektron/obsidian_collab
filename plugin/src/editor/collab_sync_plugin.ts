@@ -15,8 +15,8 @@ import { YRange } from './y-range.js'
 import { Awareness } from 'y-protocols/awareness.js';
 
 import { editorInfoField, MarkdownView, Notice, TFile } from 'obsidian';
-import { DocResolver, docResolverFacet, TextDocument } from 'src/doc_resolver.js';
-import { ErrorNotice, WarningNotice } from 'src/ui/static_components.js';
+import { DocHandle, DocManager, docManagerFacet, TextDocument } from 'src/doc_manager.js';
+import { ErrorNotice, InfoNotice, LoadingNotice, WarningNotice } from 'src/ui/static_components.js';
 import { ChoiceModal } from 'src/ui/modals.js';
 
 
@@ -31,10 +31,14 @@ type InactiveState = {
 // plugin is active for that editor
 type ActiveState = {
     active: true
+    // reference to the doc manager to access even after editor is destroyed
+    docManager: DocManager
     // the file this editor is accessing
     file: TFile
     // collab document associated with this editor
-    document: TextDocument,
+    document: TextDocument
+    // handle to the document, so we can later release the doc from syncing
+    handle: DocHandle
     // bound observer function for later unobservation
     crdtObserverFn: (event: Y.YTextEvent, transaction: Y.Transaction) => void
 }
@@ -74,7 +78,7 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
         // forbid duplicate initialization
         if (this.state.active) return;
 
-        let resolver = this.editorView.state.facet(docResolverFacet)
+        let docManager = this.editorView.state.facet(docManagerFacet)
         
         // determine what file is opened in the editor
         // TODO: what happens if the file is renamed or moved while open?
@@ -87,8 +91,8 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
         const file = editorInfo.file
         
         // check if any file is associated with 
-        const document = resolver.resolveTextDocument(file.path)
-        if (document === null) {
+        const [doc, handle] = docManager.resolveTextDocument(file.path)
+        if (doc === null) {
             new ErrorNotice("Not associated with any item").hideAfter(3);
             this.makeEditable();
             return;
@@ -99,9 +103,12 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
 
         // wait until the document is loaded (at least from local persistence)
         // TODO: show some sort of syncing animation somewhere on the editor while waiting for load
-        await document.loadedPromise
+        // for now we just do that with a notice
+        const loadingNotice = new LoadingNotice("Loading document...")
+        await doc.loadedPromise
+        loadingNotice.appendMessage(" done").completed().hideAfter(3)
 
-        if (!document.syncingEnabled) {
+        if (!doc.syncingEnabled) {
             // if the doc is NOT syncing with the server yet, it was either freshly created
             // or opened for the first time during this session. We can thus assume that
             // the state in the CRDT was not modified by another user since it was
@@ -121,11 +128,11 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
             // user intent would not be preserved.
 
             // TODO: move this to a separate function and improve it a lot
-            if (document.textType.toString() !== this.editorView.state.doc.toString()) {
+            if (doc.textType.toString() !== this.editorView.state.doc.toString()) {
                 new WarningNotice("File differs from CRDT! Overwriting CRDT with file value").hideAfter(3);
                 editorInfo.editor?.blur()   // TODO: what does this do?
-                document.crdtDoc.transact((tr) => {
-                    document.granularlyReplaceText(this.editorView.state.doc.toString())
+                doc.crdtDoc.transact((tr) => {
+                    doc.granularlyReplaceText(this.editorView.state.doc.toString())
                 }, this)
             }
 
@@ -153,7 +160,7 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
             //       from that point somehow, but that is kinda hacky, one of the proper implementations would be better.
             
             // If the doc hasn't changed, we don't have a problem anyway.
-            if (document.textType.toString() !== this.editorView.state.doc.toString()) {
+            if (doc.textType.toString() !== this.editorView.state.doc.toString()) {
                 // For now, we just show a modal asking the user what version they want to keep (local or remote)
                 const result = await new ChoiceModal<"keep_crdt" | "keep_local">(editorInfo.app)
                     .setTitle("Conflict")
@@ -170,28 +177,26 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
                         return (l.view instanceof MarkdownView ? l.view : undefined)?.editor.cm === this.editorView
                     })
                     if (leaf) leaf.detach()
+                    docManager.releaseHandle(handle)
                     return;
                 } else if (result === "keep_crdt") {
                     new Notice("Local file has been overwritten with online changes")
                     //queueMicrotask(() => {
-                        this.replaceEditorText(document.textType.toString())
+                        this.replaceEditorText(doc.textType.toString())
                     //})
                 } else if (result === "keep_local") {
                     new Notice("Collab document has been overwritten with local changes")
-                    document.crdtDoc.transact((tr) => {
-                        document.granularlyReplaceText(this.editorView.state.doc.toString())
+                    doc.crdtDoc.transact((tr) => {
+                        doc.granularlyReplaceText(this.editorView.state.doc.toString())
                     }, this)
                 }
             }
         }
 
         // if the editor was destroyed by now, we just stop here
+        // and clean up side-effects caused outside the editor
         if (this.destroyed) {
-            // TODO: in the future we must undo any sideeffects caused until now,
-            // such as releasing the document from the doc resolver so
-            // it knows it can stop syncing it. (this would normally
-            // be done in destroy() but couldn't have been done yet
-            // in this case because the plugin was still not active)
+            docManager.releaseHandle(handle)
             return;
         }
         
@@ -199,13 +204,15 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
         this.state = {
             active: true,
             file,
-            document,
+            docManager,
+            document: doc,
+            handle,
             // we save the bound update observer fn so we can later unregister it
             crdtObserverFn: this.updateEditorFromCrdt.bind(this),
         };
         
         // update the editor when the CRDT text changes
-        document.textType.observe(this.state.crdtObserverFn)
+        doc.textType.observe(this.state.crdtObserverFn)
 
         // finally, allow editing
         this.makeEditable()
@@ -233,6 +240,7 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
      */
     protected makeEditable() {
         queueMicrotask(() => {
+            if (this.destroyed) return;
             // make editor editable as to not interfere with it anymore
             this.editorView.dispatch({
                 effects: editableCompartment.reconfigure([
@@ -263,6 +271,8 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
     protected deactivate() {
         if (!this.state.active) return;
         this.state.document.textType.unobserve(this.state.crdtObserverFn)
+        // release the document handle this editor doesn't need the doc anymore
+        this.state.docManager.releaseHandle(this.state.handle)
         this.state = { active: false }
     }
 

@@ -20,7 +20,7 @@ export const VIEW_TYPE_COLLAB_DEBUG_VIEW = "collab-debug-view";
 
 const connectButtonVariants: Record<ConnectionState, {
     text: string,
-    icon: React.ReactNode
+    icon: React.ReactNode | ""
     classes: string,
 }> = {
     [ConnectionState.Disconnected]: {
@@ -30,8 +30,8 @@ const connectButtonVariants: Record<ConnectionState, {
     },
     [ConnectionState.Connecting]: {
         text: "Connecting...",
-        icon: <Loader style={{ marginInlineEnd: "0.5em" }} className="collab-spin-1s" />,
-        classes: "mod-success",
+        icon: "",
+        classes: "mod-success mod-loading",
     },
     [ConnectionState.Connected]: {
         text: "Disconnect",

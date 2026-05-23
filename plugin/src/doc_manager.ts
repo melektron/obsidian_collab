@@ -10,24 +10,36 @@ Code to get the appropriate CRDT document for a file/folder
 import * as Y from "yjs"
 import { IndexeddbPersistence } from "y-indexeddb"
 import * as cm_state from '@codemirror/state' // eslint-disable-line
+import { MapKey, ValueMap } from "./utils/valuemap"
+import { Value } from "obsidian"
 
-type UUID = string
+export type UUID = string
 
 /**
  * object to identify and locate a document globally
  */
-export class DocumentIdentifier {
+export class DocumentIdentifier extends MapKey {
     constructor(
         readonly uuid: UUID,
         readonly server: URL
-    ) { }
+    ) { super() }
 }
+
+export type DocHandle = number
+
+const docHandles = Symbol("docHandles")
 
 export class Document {
     crdtDoc: Y.Doc
     protected localPersistence: IndexeddbPersistence
     #loaded: boolean = false
+    get loaded() { return this.#loaded }
     #syncingEnabled: boolean = false;
+    get syncingEnabled() { return this.#syncingEnabled }
+
+    // list of all the active handles to this document. 
+    // only accessible by DocManager via symbol.
+    [docHandles]: DocHandle[] = []
 
     readonly loadedPromise: Promise<null>
 
@@ -57,12 +69,6 @@ export class Document {
         })
     }
 
-    get loaded() {
-        return this.#loaded
-    }
-    get syncingEnabled() {
-        return this.#syncingEnabled
-    }
 
     protected onLoaded() { }
     //
@@ -112,10 +118,12 @@ export class TextDocument extends Document {
     }
 }
 
-export class DocResolver {
+export class DocManager {
     mountpointIndex: Map<string, DocumentIdentifier>
-    activeDocs: Map<UUID, TextDocument>
-
+    private activeDocs: ValueMap<DocumentIdentifier, TextDocument>
+    private handleToDocId: Map<DocHandle, DocumentIdentifier>
+    private nextDocHandle: DocHandle = 0;
+    
     constructor() {
         this.mountpointIndex = new Map([
             ["My folder/Testsubfile.md", new DocumentIdentifier("00000000-0000-0000-0000-ffff00000000", new URL("http://localhost:1234/collab"))],
@@ -124,28 +132,65 @@ export class DocResolver {
             ["Untitled 1.md", new DocumentIdentifier("00000000-0000-0000-0000-ffff00000002", new URL("http://localhost:1234/collab"))],
             ["Untitled 2.md", new DocumentIdentifier("00000000-0000-0000-0000-ffff00000002", new URL("http://localhost:1234/collab"))],
         ])
-        this.activeDocs = new Map<string, TextDocument>()
+        this.activeDocs = new ValueMap()
+        this.handleToDocId = new Map()
     }
 
-    resolveTextDocument(path: string): TextDocument | null {
+    private allocateHandle(): DocHandle {
+        return this.nextDocHandle++
+    }
+    
+    resolveTextDocument(path: string): [TextDocument, DocHandle] | [null, null] {
         // mountpoint lookup (TODO: do with real mountpoint table)
         const docId = this.mountpointIndex.get(path) ?? null
-        if (docId === null) return null;
+        if (docId === null) return [null, null];
 
         // check if the document is already active
-        let document = this.activeDocs.get(docId.uuid) ?? null
-        if (document === null) {
+        let doc = this.activeDocs.get(docId) ?? null
+        if (doc === null) {
             // document is not active, load it from local persistence
-            document = new TextDocument(docId.uuid)
-            this.activeDocs.set(docId.uuid, document)
+            doc = new TextDocument(docId.uuid)
+            this.activeDocs.set(docId, doc)
         };
 
-        return document
+        const handle = this.allocateHandle()
+        // register handle with the document
+        doc[docHandles].push(handle)
+        this.handleToDocId.set(handle, docId)
+
+        return [doc, handle]
+    }
+
+    releaseHandle(handle: DocHandle) {
+        // retrieve the referenced document. If it isn't active
+        // or the handle is invalid (possible double-release)
+        // we ignore it but print warning as it is a sign of a bug
+        const docId = this.handleToDocId.get(handle)
+        if (docId === undefined) {
+            console.warn("Attempted release of unknown handle, ignoring")
+            return
+        };
+        // get the doc
+        const doc = this.activeDocs.get(docId)
+        if (doc === undefined) {
+            throw new Error("Handle references inactive doc, this is a bug!")
+        }
+
+        // otherwise remove from the doc and the map
+        doc[docHandles].remove(handle) // this is an obsidian addition to Array<T>
+        this.handleToDocId.delete(handle)
+
+        if (doc[docHandles].length !== 0) return;
+        
+        // Document has no more handles, so it must be deactivated
+        console.log("deactivating document", docId)
+        this.activeDocs.delete(docId)
+        // TODO: stop syncing this document if it is syncing currently
     }
 }
 
 
-export const docResolverFacet = cm_state.Facet.define<DocResolver, DocResolver>({
+export const docManagerFacet = cm_state.Facet.define<DocManager, DocManager>({
     combine(inputs) {
         return inputs[inputs.length - 1]
     }

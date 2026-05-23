@@ -1,11 +1,63 @@
 /*
+ELEKTRON © 2025 - now
+Written by melektron
+www.elektron.work
+25.05.25, 19:01
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
-
-If your plugin does not need CSS, delete this file.
-
+Global CSS for Collab plugin
 */
+
+/*
+ * === General ===
+ */
+
+.collab-spin-1s {
+    animation: collab-spin 1s linear infinite;
+}
+@keyframes collab-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+
+/*
+Class that can be applied to any element to make it 
+appear like an animated loading icon (mostly copied form
+obsidian's button.mod-loading, but works on all elements,
+uses the icon size instead of 12px and doesn't hide text)
+*/
+.collab-icon-loading {
+  position: relative;
+  white-space: nowrap;
+  overflow: hidden;
+  pointer-events: none;
+}
+.collab-icon-loading::after {
+  content: '';
+  position: absolute;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  margin: auto;
+  box-sizing: border-box;
+  border: 2px solid transparent;
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: collab-spin 1s ease infinite;
+}
+
+
+
+/*
+ * === Custom Notices ===
+ */
 
 /* style error notices with red background */ 
 div.notice:has(div > span.collab-error-notice) {
@@ -21,6 +73,16 @@ div.notice:has(div > span.collab-info-notice) {
 div.notice:has(div > span.collab-debug-notice) {
     background-color: purple;
 }
+div.notice:has(div > span.collab-loading-notice) {
+    /* this is just the default black */
+    background-color: auto;
+}
+
+
+
+/*
+ * === UI Elements ===
+ */
 
 .collab-button:active {
     transform: translateY(1px) scale(0.99);
@@ -34,15 +96,3 @@ For error variant, it is provided by default in button.mod-destructive
     --text-color: var(--text-success)
 }
 
-
-.collab-spin-1s {
-    animation: collab-spin 1s linear infinite;
-}
-@keyframes collab-spin {
-  0% {
-    transform: rotate(0deg);
-  }
-  100% {
-    transform: rotate(360deg);
-  }
-}
