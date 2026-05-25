@@ -175,6 +175,9 @@ impl ClientRepr {
                 .await?;
                 debug!("Sent doc request response");
             }
+            CollabMessageC2S::ConfigureUpdates { doc_id, enabled } => {
+                
+            }
             CollabMessageC2S::SyncStep1(SyncStep1Inner {
                 doc_id,
                 state_vector,

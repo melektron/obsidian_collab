@@ -20,7 +20,7 @@ import { DebugNotice, ErrorNotice, InfoNotice, WarningNotice } from "./ui/static
 import { DocManager, docManagerFacet } from "./doc_manager";
 import { editableCompartment, collabSyncPlugin } from "./editor/collab_sync_plugin";
 import { CollabDebugView, VIEW_TYPE_COLLAB_DEBUG_VIEW } from "./ui/debug_view";
-import { ConnectionProvider } from "./connection_provider";
+import { Connection } from "./networking/connection";
 import { ChoiceModal, CtaModal } from "./ui/modals";
 
 
@@ -32,7 +32,7 @@ export default class ObsidianCollabPlugin extends Plugin {
     settings: CollabSettings = DEFAULT_SETTINGS;
     lastEditor: Editor | undefined;
     editorExtensions: Extension[] = [];
-    connection!: ConnectionProvider;
+    connection!: Connection;
     docManager!: DocManager;
 
     async onload() {
@@ -43,11 +43,10 @@ export default class ObsidianCollabPlugin extends Plugin {
         // load settings from disk and initialize settings UI
         await this.loadSettings();
         this.addSettingTab(new CollabSettingTab(this.app, this));
-
-        this.connection = new ConnectionProvider(this.settings.serverUrl);
-
+        
         // application components
-        this.docManager = new DocManager()
+        this.connection = new Connection(this.settings.serverUrl);
+        this.docManager = new DocManager(this.connection)
 
         // load debug view
         this.registerView(
@@ -273,6 +272,8 @@ export default class ObsidianCollabPlugin extends Plugin {
 
     onunload() {
         let unloadingNotice = new InfoNotice("Collab unloading...");
+
+        this.connection.disconnect()
 
         unloadingNotice.appendMessage(" Done.").hideAfter(2);
     }

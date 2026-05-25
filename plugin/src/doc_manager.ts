@@ -12,6 +12,9 @@ import { IndexeddbPersistence } from "y-indexeddb"
 import * as cm_state from '@codemirror/state' // eslint-disable-line
 import { MapKey, ValueMap } from "./utils/valuemap"
 import { Value } from "obsidian"
+import { Connection, ConnectionState } from "./networking/connection"
+import { AnyUint8Array } from "./networking/proto_shared"
+import { Listener } from "./networking/event_channel"
 
 export type UUID = string
 
@@ -30,12 +33,30 @@ export type DocHandle = number
 const docHandles = Symbol("docHandles")
 
 export class Document {
+    // components
     crdtDoc: Y.Doc
     protected localPersistence: IndexeddbPersistence
+
+    // whether the document has finished loading from local persistence
     #loaded: boolean = false
     get loaded() { return this.#loaded }
+    
+    // whether syncing is allowed and intended
     #syncingEnabled: boolean = false;
     get syncingEnabled() { return this.#syncingEnabled }
+    
+    // whether syncing is actually active (may be false
+    // if server is not connected)
+    #syncingActive: boolean = false;
+    get syncingActive() { return this.#syncingActive }
+
+    private connectedListener: Listener | null = null;
+    
+    // listener IDs active during syncing
+    private syncStep1Listener: Listener | null = null;
+    private syncStep2Listener: Listener | null = null;
+    private syncStepUpdateListener: Listener | null = null;
+    private onUpdateCb: ((update: AnyUint8Array, origin: any) => void) | null = null;
 
     // list of all the active handles to this document. 
     // only accessible by DocManager via symbol.
@@ -47,7 +68,8 @@ export class Document {
     // TODO: question: is this even needed? on first load, the _remoteSyncingEnabled is always set immediately, so that would be enough. When remote sync is active already, always ask user about how they want to merge
 
     constructor(
-        readonly uuid: string
+        readonly uuid: string,
+        readonly connection: Connection,
     ) {
         // create new document
         this.crdtDoc = new Y.Doc()  // TODO: use server specified client ID
@@ -67,19 +89,150 @@ export class Document {
                 }, 1000);
             })
         })
+
+        // Try to start syncing whenever the server is connected
+        this.connectedListener = this.connection.connectedEvent.on(() => this.startSyncing())
+
+        this.crdtDoc.on("destroy", (doc) => {
+            // when the document is destroyed, we also stop 
+            // and disable syncing if it is still active
+            // and stop listening for new connections
+            this.connectedListener = this.connection.connectedEvent.off(this.connectedListener)
+            this.disableSyncing()
+            // the DB provider is automatically destroyed as well
+        })
     }
 
-
     protected onLoaded() { }
-    //
-    //public get remoteSyncing() : boolean {
-    //    return this._remoteSyncingEnabled
-    //}
-    //
-    //public set remoteSyncing(v : boolean) {
-    //    this._remoteSyncingEnabled = v;
-    //    // TODO: connect to server and exchange updates between local doc and remote doc
-    //}
+
+    private handleSyncStep1(state_vector: AnyUint8Array) {
+        // respond with sync step 2
+        const update = Y.encodeStateAsUpdate(this.crdtDoc, state_vector)
+        this.connection.sendSyncStep2(this.uuid, update)
+    }
+    private handleSyncUpdate(update: AnyUint8Array) {
+        // apply the update with teh connection as the origin
+        // to indicate this update was received from the server
+        Y.applyUpdate(this.crdtDoc, update, this.connection)
+    }
+
+    /**
+     * Attempts to start syncing if syncing is enabled 
+     * (`syncingEnabled` === true). If that is possible,
+     * (bc server is connected) it sets `syncingActive` to true, 
+     * otherwise (mainly because server is not connected) it does nothing.
+     * 
+     * @return true if syncing was started, false otherwise
+     * (including because it was already active)
+     */
+    public startSyncing(): boolean {
+        console.log("trie to start syncing")
+        // if syncing is not enabled, we do nothing
+        if (!this.syncingEnabled) return false
+        // if syncing is already active, we do nothing
+        if (this.syncingActive) return false
+        // if we are not connected, we can't do anything either
+        if (!this.connection.connected) return false
+
+        // otherwise enable updates and initiate first sync with server
+        this.#syncingActive = true
+        
+        // listen for server events regarding this document
+        this.syncStep1Listener = this.connection.syncStep1Event.on(this.uuid, (msg) => this.handleSyncStep1(msg.state_vector))
+        this.syncStep2Listener = this.connection.syncStep2Event.on(this.uuid, (msg) => this.handleSyncUpdate(msg.update))
+        this.syncStepUpdateListener = this.connection.syncStepUpdateEvent.on(this.uuid, (msg) => this.handleSyncUpdate(msg.update))
+
+        // enable update events for this document
+        this.connection.configureUpdates(this.uuid, true)
+        
+        // initiate sync step 1, to which a server response follow
+        const state_vector = Y.encodeStateVector(this.crdtDoc)
+        this.connection.sendSyncStep1(this.uuid, state_vector)
+
+        // forward local updates to the server
+        this.onUpdateCb = (update, origin) => {
+            // updates originating from the server are ignored
+            if (origin === this.connection) return;
+            this.connection.sendSyncStepUpdate(this.uuid, update)
+        }
+        this.crdtDoc.on("update", this.onUpdateCb)
+
+        // when the server disconnects, stop syncing
+        this.connection.disconnectEvent.once(() => this.stopSyncing())
+
+        return true
+    }
+
+    /**
+     * Stops syncing immediately by disabling
+     * server updates, setting `syncingActive` false
+     * and cleaning up and releasing any resources (listeners, ...)
+     * related to syncing.
+     * This does NOT set `syncingEnabled` to false, and thus
+     * it will be stated again when the connection to the server
+     * is restored.
+     */
+    public stopSyncing() {
+        console.log("trie stop syncing")
+        if (!this.#syncingActive) return
+        
+        // disable all the event listeners
+        this.syncStep1Listener = this.connection.syncStep1Event.off(this.uuid, this.syncStep1Listener)
+        this.syncStep2Listener = this.connection.syncStep2Event.off(this.uuid, this.syncStep2Listener)
+        this.syncStepUpdateListener = this.connection.syncStepUpdateEvent.off(this.uuid, this.syncStepUpdateListener)
+        
+        // request server to stop sending updates
+        // (if server is not connected, this will do nothing,
+        // but server automatically stops in that case anyway)
+        this.connection.configureUpdates(this.uuid, false)
+        
+        // disable local document update callback
+        if (this.onUpdateCb !== null) {
+            this.crdtDoc.off("update", this.onUpdateCb)
+            this.onUpdateCb = null
+        }
+
+        // only set to false once everything was completed
+        this.#syncingActive = false
+    }
+
+    /**
+     * enables (allows) syncing for this document, but does
+     * not yet start syncing it immediately. Call `startSyncing` after
+     * to start immediately.
+     * `startSyncing()` is also called automatically when the server connects later.
+     * This is intended to enable syncing once all preliminary checks
+     * have completed (e.g. merging of local files with local CRDT state).
+     */
+    public enableSyncing() {
+        this.#syncingEnabled = true
+    }
+
+    /**
+     * disables syncing by setting `syncingEnabled` to false.
+     * If syncing is currently active, it is also stopped,
+     * cleaning up all associated resources
+     */
+    public disableSyncing() {
+        this.#syncingEnabled = false
+        this.stopSyncing()
+    }
+
+    /**
+     * destroys the document instance by stopping syncing,
+     * local persistence and destroying the yjs
+     * document itself.
+     */
+    public destroy() {
+        // document destruction triggers all further destroy actions
+        // (see constructor)
+        this.crdtDoc.destroy()
+    }
+
+    syncNow() {
+        // TODO: re-send syncstep1 to initiate a complete re-sync at this point
+        // could be used by a potential "sync now" button in the UI
+    }
 }
 
 /**
@@ -91,9 +244,10 @@ export class TextDocument extends Document {
     //fresh: boolean = true
 
     constructor(
-        uuid: string
+        uuid: string,
+        connection: Connection,
     ) {
-        super(uuid)
+        super(uuid, connection)
         this.textType = this.crdtDoc.getText("text-file-content")
     }
 
@@ -113,6 +267,7 @@ export class TextDocument extends Document {
      */
     granularlyReplaceText(newText: string) {
         // TODO: don't do this, instead create a diff and do a granular update
+        // https://discuss.yjs.dev/t/does-a-huge-text-with-tiny-changes-overriding-lead-an-entire-document-sync/2461
         this.textType.delete(0, this.textType.length)
         this.textType.insert(0, newText)
     }
@@ -124,13 +279,15 @@ export class DocManager {
     private handleToDocId: Map<DocHandle, DocumentIdentifier>
     private nextDocHandle: DocHandle = 0;
     
-    constructor() {
+    constructor(
+        readonly connection: Connection
+    ) {
         this.mountpointIndex = new Map([
-            ["My folder/Testsubfile.md", new DocumentIdentifier("00000000-0000-0000-0000-ffff00000000", new URL("http://localhost:1234/collab"))],
-            ["Topfile.md", new DocumentIdentifier("00000000-0000-0000-0000-ffff00000000", new URL("http://localhost:1234/collab"))],
+            ["My folder/Testsubfile.md", new DocumentIdentifier("00000000-0000-4000-8000-000000000001", new URL("http://localhost:1234/collab"))],
+            ["Topfile.md", new DocumentIdentifier("00000000-0000-4000-8000-000000000001", new URL("http://localhost:1234/collab"))],
 
-            ["Untitled 1.md", new DocumentIdentifier("00000000-0000-0000-0000-ffff00000002", new URL("http://localhost:1234/collab"))],
-            ["Untitled 2.md", new DocumentIdentifier("00000000-0000-0000-0000-ffff00000002", new URL("http://localhost:1234/collab"))],
+            ["Untitled 1.md", new DocumentIdentifier("00000000-0000-4000-8000-000000000002", new URL("http://localhost:1234/collab"))],
+            ["Untitled 2.md", new DocumentIdentifier("00000000-0000-4000-8000-000000000002", new URL("http://localhost:1234/collab"))],
         ])
         this.activeDocs = new ValueMap()
         this.handleToDocId = new Map()
@@ -149,7 +306,7 @@ export class DocManager {
         let doc = this.activeDocs.get(docId) ?? null
         if (doc === null) {
             // document is not active, load it from local persistence
-            doc = new TextDocument(docId.uuid)
+            doc = new TextDocument(docId.uuid, this.connection)
             this.activeDocs.set(docId, doc)
         };
 
@@ -182,10 +339,10 @@ export class DocManager {
 
         if (doc[docHandles].length !== 0) return;
         
-        // Document has no more handles, so it must be deactivated
-        console.log("deactivating document", docId)
+        // Document has no more handles, so it must be destroyed
+        console.log("destroying document", docId)
+        doc.destroy()
         this.activeDocs.delete(docId)
-        // TODO: stop syncing this document if it is syncing currently
     }
 }
 

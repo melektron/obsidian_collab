@@ -31,7 +31,7 @@ enum DocError {
 
 type ConsoleResult<T> = Result<T, ConsoleError>;
 */
-pub const DOC_ID: Uuid = uuid!("00000000-0000-0000-0000-ffff00000000");
+pub const DOC_ID: Uuid = uuid!("00000000-0000-4000-8000-000000000001");
 
 
 
@@ -100,6 +100,8 @@ impl DocProvider {
     }
 
     pub async fn run(self: Arc<Self>) -> Result<()> {
+        return Ok(());
+
         let doc = Doc::new();
         // TODO: maybe use a manual, async implementation for this in the future:
         let text = doc.get_or_insert_text("root_item");
@@ -123,7 +125,6 @@ impl DocProvider {
         let sv2 = doc.transact().await.state_vector();
         let encoded = sv2.encode_v1();
         debug!("State: {:#?}", sv2);
-
 
         info!("now the json...");
         let msg = CollabMessageS2C::SyncStep1(SyncStep1Inner {

@@ -90,7 +90,7 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
         }
         const file = editorInfo.file
         
-        // check if any file is associated with 
+        // check if any document is associated with this path
         const [doc, handle] = docManager.resolveTextDocument(file.path)
         if (doc === null) {
             new ErrorNotice("Not associated with any item").hideAfter(3);
@@ -99,7 +99,6 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
         }
 
         console.log("Associated with item");
-        new Notice("Associated with item");
 
         // wait until the document is loaded (at least from local persistence)
         // TODO: show some sort of syncing animation somewhere on the editor while waiting for load
@@ -136,7 +135,12 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
                 }, this)
             }
 
-            // TODO: enable remote syncing
+            // enable syncing and try to start syncing right away
+            doc.enableSyncing()
+            doc.startSyncing()
+            if (!doc.syncingActive) {
+                new InfoNotice("Syncing is currently not possible, but you can continue to work offline.").hideAfter(3)
+            }
 
         } else /* if (document.syncingEnabled) */ {
             // If the doc is already syncing with the server, we must assume that 

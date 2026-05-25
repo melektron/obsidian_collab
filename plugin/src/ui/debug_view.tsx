@@ -12,7 +12,7 @@ import { createContext, StrictMode, useContext, useEffectEvent, useState } from 
 import { createRoot, Root } from "react-dom/client"
 import { Loader, LucideProvider, Power, Unplug } from "lucide-react"
 
-import { ConnectionProvider, ConnectionState } from "src/connection_provider";
+import { Connection, ConnectionState } from "src/networking/connection";
 import { useVueRef } from "src/utils/reactivity";
 
 export const VIEW_TYPE_COLLAB_DEBUG_VIEW = "collab-debug-view";
@@ -53,6 +53,14 @@ function DebugView() {
         }
     });
 
+    const getDocBtnCallback = useEffectEvent(async () => {
+        const resp = await dbg_view.connection.getDocRpc.call({
+            doc_id: "00000000-0000-4000-8000-000000000002"
+        })
+
+        console.log(resp)
+    })
+
     const conn_state = useVueRef(dbg_view.connection.state)
     const conn_btn_variant = connectButtonVariants[conn_state]
 
@@ -82,15 +90,20 @@ function DebugView() {
                 {conn_btn_variant.icon}
                 {conn_btn_variant.text}
             </button>
+
+            <button onClick={getDocBtnCallback} className={`collab-button`}>
+                GetDoc
+            </button>
         </div>
     </>
 }
 
 const CollabDebugViewContext = createContext<CollabDebugView>(null!);
 export class CollabDebugView extends ItemView {
-    root: Root | null = null;
+    root: Root | null = null
+    icon: string = "bug"
 
-    constructor(leaf: WorkspaceLeaf, public connection: ConnectionProvider) {
+    constructor(leaf: WorkspaceLeaf, public connection: Connection) {
         super(leaf);
     }
 
@@ -118,6 +131,5 @@ export class CollabDebugView extends ItemView {
     async onClose() {
         if (this.root)
             this.root.unmount()
-        // Nothing to clean up.
     }
 }

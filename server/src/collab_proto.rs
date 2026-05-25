@@ -33,8 +33,15 @@ pub enum CollabMessageC2S {
     /// Sent once to the server to request initial information about a document
     /// including a replica ID that can be used to edit the document.
     GetDoc {
-        req_id: u64,
+        req_id: u32,
         doc_id: Uuid,
+    },
+    
+    // Sent to enable or disable subscription to updates from 
+    // a particular doc id.
+    ConfigureUpdates {
+        doc_id: Uuid,
+        enabled: bool,
     },
 
     SyncStep1(SyncStep1Inner),
@@ -51,7 +58,7 @@ pub enum CollabMessageS2C {
     /// Sent once to the server to request initial information about a document
     /// including a replica ID that can be used to edit the document.
     GetDocResp {
-        req_id: u64,
+        req_id: u32,
         doc_id: Uuid,
 
         /// replica ID that can be used to edit this document.
