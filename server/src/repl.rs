@@ -13,13 +13,15 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use log::info;
 use rustyline_async::{Readline, ReadlineEvent, SharedWriter};
+use uuid::{Uuid, uuid};
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use tokio_util::future::FutureExt;
 use yrs::{AsyncTransact, GetString, Text};
 
 use crate::app::AppState;
-use crate::doc_provider::{DOC_ID, DocProvider};
+use crate::doc_provider::DocProvider;
+use crate::utils::poisonless_lock::PoisonlessLock;
 use crate::webserver::WebServer;
 
 pub fn handle_write_fail(r: Result<(), std::io::Error>) {
@@ -112,6 +114,9 @@ enum ReplCommands {
         about = "Shuts down the server cleanly"
     )]
     Exit,
+    
+    #[command(alias = "cd", about = "Changes the document selected to operate on")]
+    ChangeDocument { doc_id: Uuid },
 
     #[command(alias = "a", about = "Appends text to the document")]
     Append { text: String },
@@ -125,8 +130,14 @@ enum ReplCommands {
     #[command(alias = "p", about = "Prints the current document")]
     Print,
 
-    #[command(alias = "l", about = "Prints a list of all connected clients")]
+    #[command(alias = "lc", about = "Prints a list of all connected clients")]
     ListClients,
+
+    #[command(
+        alias = "ld",
+        about = "Prints a list of documents hosted by the server"
+    )]
+    ListDocumnts,
 }
 
 pub type ReplIo = (Readline, SharedWriter);
@@ -138,6 +149,7 @@ pub struct Repl {
 
     rl: Mutex<Readline>,
     stdout: SharedWriter,
+    selected_doc: Mutex<Uuid>,
 }
 
 impl Repl {
@@ -153,6 +165,7 @@ impl Repl {
             webserver: webserver.clone(),
             rl: Mutex::new(io.0),
             stdout: io.1,
+            selected_doc: Mutex::new(uuid!("00000000-0000-4000-8000-000000000001")),
         }
     }
 
@@ -242,8 +255,11 @@ impl Repl {
             ReplCommands::Exit => {
                 self.app_state.terminate.cancel();
             }
+            ReplCommands::ChangeDocument { doc_id } => {
+                *self.selected_doc.poisonless_lock() = doc_id
+            }
             ReplCommands::Append { text } => {
-                let doc = self.doc_provider.get_doc_by_id(DOC_ID);
+                let doc = self.doc_provider.get_doc_by_id(*self.selected_doc.poisonless_lock());
 
                 let mut txn = doc.ydoc.transact_mut().await;
                 shelloutln!(self, "Before: {}", doc.text.get_string(&txn));
@@ -255,7 +271,7 @@ impl Repl {
                 shelloutln!(self, "After: {}", doc.text.get_string(&txn));
             }
             ReplCommands::Insert { position, text } => {
-                let doc = self.doc_provider.get_doc_by_id(DOC_ID);
+                let doc = self.doc_provider.get_doc_by_id(*self.selected_doc.poisonless_lock());
 
                 let mut txn = doc.ydoc.transact_mut().await;
                 shelloutln!(self, "Before: {}", doc.text.get_string(&txn));
@@ -266,7 +282,7 @@ impl Repl {
                 shelloutln!(self, "After: {}", doc.text.get_string(&txn));
             }
             ReplCommands::Delete { position, len } => {
-                let doc = self.doc_provider.get_doc_by_id(DOC_ID);
+                let doc = self.doc_provider.get_doc_by_id(*self.selected_doc.poisonless_lock());
 
                 let mut txn = doc.ydoc.transact_mut().await;
                 shelloutln!(self, "Before: {}", doc.text.get_string(&txn));
@@ -277,7 +293,7 @@ impl Repl {
                 shelloutln!(self, "After: {}", doc.text.get_string(&txn));
             }
             ReplCommands::Print => {
-                let doc = self.doc_provider.get_doc_by_id(DOC_ID);
+                let doc = self.doc_provider.get_doc_by_id(*self.selected_doc.poisonless_lock());
                 let txn = doc.ydoc.transact().await;
                 shelloutln!(self, "{}", doc.text.get_string(&txn));
             }
@@ -289,6 +305,11 @@ impl Repl {
                 }
                 if clients.is_empty() {
                     shelloutln!(self, "currently no active clients");
+                }
+            }
+            ReplCommands::ListDocumnts => {
+                for doc_id in self.doc_provider.get_cached_ids() {
+                    shelloutln!(self, " - {doc_id}")
                 }
             }
         }

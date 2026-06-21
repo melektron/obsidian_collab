@@ -25,7 +25,6 @@ export const collabMessageS2C = z.discriminatedUnion("s2cmtype", [
         s2cmtype: z.literal(MessageTypeS2C.GetDocResp),
         req_id: z.uint32(),
         doc_id: z.uuid(),
-        replica_id: z.number(),
     }),
     z.object({
         s2cmtype: z.literal(MessageTypeS2C.SyncStep1),

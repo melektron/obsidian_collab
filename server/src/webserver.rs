@@ -22,10 +22,8 @@ pub struct WebServer {
     app_state: Arc<AppState>,
     doc_provider: Arc<DocProvider>,
 
-    // unique identifier used by clients as the CRDT client id 
-    // (should probably be called replica ID). This must be unique
-    // across all clients and sessions.
-    // TODO: this must be persisted between restarts in the future
+    // unique identifier used to identify client
+    // connection internal to server
     next_client_id: AtomicU32,
 
     // list of active clients
@@ -42,7 +40,7 @@ mod routes {
     use crate::{client_repr::ClientRepr, webserver::WebServer};
 
     pub async fn health_check(
-        State(state): State<Arc<WebServer>>,
+        State(_state): State<Arc<WebServer>>,
         ClientIp(ip): ClientIp,
     ) -> String {
         format!("

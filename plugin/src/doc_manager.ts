@@ -11,7 +11,7 @@ import * as Y from "yjs"
 import { IndexeddbPersistence } from "y-indexeddb"
 import * as cm_state from '@codemirror/state' // eslint-disable-line
 import { MapKey, ValueMap } from "./utils/valuemap"
-import { Value } from "obsidian"
+import { App } from "obsidian"
 import { Connection, ConnectionState } from "./networking/connection"
 import { AnyUint8Array } from "./networking/proto_shared"
 import { Listener } from "./networking/event_channel"
@@ -68,13 +68,17 @@ export class Document {
     // TODO: question: is this even needed? on first load, the _remoteSyncingEnabled is always set immediately, so that would be enough. When remote sync is active already, always ask user about how they want to merge
 
     constructor(
-        readonly uuid: string,
+        readonly app: App,
         readonly connection: Connection,
+        readonly uuid: string,
     ) {
         // create new document
         this.crdtDoc = new Y.Doc()  // TODO: use server specified client ID
-        // load document from local indexeddb database
-        this.localPersistence = new IndexeddbPersistence(this.uuid, this.crdtDoc)
+        // load document from local indexeddb database (db name includes
+        // both vault id (appId) and doc id, as the local persistence has to be unique across vaults
+        // so if two vaults share the same collab doc, they still can do independent offline
+        // conflict resolution)
+        this.localPersistence = new IndexeddbPersistence(`${this.app.appId}-collab-doc-${this.uuid}`, this.crdtDoc)
         this.localPersistence.whenSynced
         this.loadedPromise = new Promise((resolve, _) => {
             this.localPersistence.on("synced", () => {
@@ -244,10 +248,11 @@ export class TextDocument extends Document {
     //fresh: boolean = true
 
     constructor(
-        uuid: string,
+        app: App,
         connection: Connection,
+        uuid: string,
     ) {
-        super(uuid, connection)
+        super(app, connection, uuid)
         this.textType = this.crdtDoc.getText("text-file-content")
     }
 
@@ -280,6 +285,7 @@ export class DocManager {
     private nextDocHandle: DocHandle = 0;
     
     constructor(
+        readonly app: App,
         readonly connection: Connection
     ) {
         this.mountpointIndex = new Map([
@@ -306,7 +312,7 @@ export class DocManager {
         let doc = this.activeDocs.get(docId) ?? null
         if (doc === null) {
             // document is not active, load it from local persistence
-            doc = new TextDocument(docId.uuid, this.connection)
+            doc = new TextDocument(this.app, this.connection, docId.uuid)
             this.activeDocs.set(docId, doc)
         };
 

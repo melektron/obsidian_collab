@@ -19,4 +19,16 @@ declare module "obsidian" {
      */
     cm: EditorView
   }
+
+  interface App {
+    /**
+     * WARNING! not exposed by Obsidian, amy break in the future.
+     * 
+     * Unique ID identifying the active vault. Obsidian internally uses this to
+     * e.g. differentiate local storage keys, so different vaults don't collide
+     * (as chromium session is persisted and shared across vaults)
+     * https://forum.obsidian.md/t/how-to-uniquely-identify-an-obsidian-instance/85740/2
+     */
+    appId: string
+  }
 }

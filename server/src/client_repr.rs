@@ -7,7 +7,7 @@ www.elektron.work
 Structure representing a collab client
 */
 
-use std::{collections::HashSet, fmt::Display, net::IpAddr, sync::Arc, time::Duration};
+use std::{collections::{HashMap, HashSet}, fmt::Display, net::IpAddr, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use axum::extract::ws;
@@ -15,16 +15,23 @@ use futures::{
     SinkExt, StreamExt,
     stream::{SplitSink, SplitStream},
 };
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use tokio::{sync::Mutex, time::sleep};
-use tokio_util::{future::FutureExt, sync::{CancellationToken, WaitForCancellationFuture}};
+use tokio_util::{
+    future::FutureExt,
+    sync::{CancellationToken, WaitForCancellationFuture},
+};
 use uuid::Uuid;
-use yrs::{AsyncTransact, ReadTxn, StateVector, updates::{decoder::Decode, encoder::Encode}};
+use yrs::{
+    AsyncTransact, ReadTxn, StateVector, Subscription, UpdateEvent, updates::{decoder::Decode, encoder::Encode}
+};
 
 use crate::{
     app::AppState,
-    collab_proto::{CollabMessageC2S, CollabMessageS2C, SyncStep1Inner, SyncStep2Inner, SyncUpdateInner},
-    doc_provider::DocProvider,
+    collab_proto::{
+        CollabMessageC2S, CollabMessageS2C, SyncStep1Inner, SyncStep2Inner, SyncUpdateInner,
+    },
+    doc_provider::DocProvider, utils::{or_log::OrLog, poisonless_lock::PoisonlessLock},
 };
 
 type WsSink = SplitSink<ws::WebSocket, ws::Message>;
@@ -40,13 +47,17 @@ pub struct ClientRepr {
     sink: Mutex<WsSink>,
     stream: Mutex<WsStream>,
 
-    // unique identifier for the client to use as the
-    // CRDT client ID (which should be called replica ID).
-    // TODO: maybe we want to transition to per-document replica-ids
-    // to allow for improved scalability?
+    // identifier for server internal use
     client_id: u32,
 
-    active_docs: HashSet<Uuid>,
+    // channel to receive updates from documents
+    update_tx: flume::Sender<(Uuid, Vec<u8>)>,
+    update_rx: flume::Receiver<(Uuid, Vec<u8>)>,
+    // map of docs with updates enabled to their subscriptions.
+    // removing the entry from this will drop the subscription and therefore
+    // disable updates automatically.
+    active_docs: std::sync::Mutex<HashMap<Uuid, Subscription>>,
+
 
     // cancellation token to forcefully stop all processing and
     // disconnect client by dropping sockets
@@ -66,6 +77,8 @@ impl ClientRepr {
     ) -> Self {
         let (sink, stream) = socket.split();
 
+        let (update_tx, update_rx) = flume::unbounded();
+
         Self {
             app_state: app_state.clone(),
             doc_provider: doc_provider.clone(),
@@ -76,7 +89,9 @@ impl ClientRepr {
 
             client_id,
 
-            active_docs: HashSet::new(),
+            update_tx,
+            update_rx,
+            active_docs: std::sync::Mutex::new(HashMap::new()),
 
             force_close: CancellationToken::new(),
             has_closed: CancellationToken::new(),
@@ -85,29 +100,38 @@ impl ClientRepr {
 
     pub async fn run(&self) -> Result<()> {
         let mut stream = self.stream.lock().await;
-
         loop {
-            match stream
-                .next()
-                .with_cancellation_token(&self.force_close)
-                .await
-            {
-                // got message
-                Some(Some(msg)) => {
-                    let msg = msg.context("Error extracting websocket message")?;
-                    self.handle_websocket_message(msg).await?;
-                }
-                // token canceled -> force exit
-                None => {
-                    warn!("Force close rx loop");
+            tokio::select! {
+                _ = self.force_close.cancelled() => {
+                    warn!("Force close client rx loop");
                     break;
                 }
-                // no more messages, socket closed cleanly
-                Some(None) => {
-                    debug!("No more messages, exiting rx loop");
-                    break;
+                // listen for incoming messages
+                maybe_msg = stream.next() => {
+                    match maybe_msg
+                    {
+                        // got message
+                        Some(msg) => {
+                            let msg = msg.context("Error extracting websocket message")?;
+                            self.handle_websocket_message(msg).await?;
+                        }
+                        // no more messages, socket closed cleanly
+                        None => {
+                            debug!("No more messages, exiting rx loop");
+                            break;
+                        }
+                    }
+                }
+                // send any outgoing updates
+                value = self.update_rx.recv_async() => {
+                    if let Ok((doc_id, update)) = value {
+                        self.send_message(CollabMessageS2C::SyncUpdate(SyncUpdateInner { 
+                            doc_id, update
+                        })).await?;
+                    }
                 }
             }
+            
         }
         self.has_closed.cancel();
         Ok(())
@@ -170,13 +194,43 @@ impl ClientRepr {
                 self.send_message(CollabMessageS2C::GetDocResp {
                     req_id,
                     doc_id,
-                    replica_id: self.client_id,
                 })
                 .await?;
                 debug!("Sent doc request response");
             }
-            CollabMessageC2S::ConfigureUpdates { doc_id, enabled } => {
-                
+            CollabMessageC2S::ConfigureUpdates { doc_id, enabled } => 'handler: {
+                let doc = self.doc_provider.get_doc_by_id(doc_id);        
+                let mut active_docs = self.active_docs.poisonless_lock();
+
+                if enabled {
+                    // updates should be enabled
+
+                    // if already enabled, do nothing
+                    if active_docs.contains_key(&doc_id) { break 'handler; }
+    
+                    // otherwise try to subscribe to updates
+                    let observe_result = doc.ydoc.observe_update_v1({
+                        let sender = self.update_tx.clone();
+                        move |_txn, update| {
+                            sender.send((doc_id, update.update.clone())).or_warn("Tried to send update to dropped client");
+                        }
+                    });
+                    if let Ok(sub) = observe_result {
+                        active_docs.insert(doc_id, sub);
+                        debug!("enabled updates for {doc_id} for client {}", self.client_id)
+                    } else {
+                        error!("Failed to enable subscription of doc {doc_id} for client {}", self.client_id)
+                    };
+
+                } else {
+                    // updates should be disabled,
+                    // drop subscription 
+                    if active_docs.remove(&doc_id).is_some() {
+                        debug!("disabled updates for {doc_id} for client {}", self.client_id)
+                    }
+
+                }
+                // TODO: maybe respond with some sort of status indicating success or failure
             }
             CollabMessageC2S::SyncStep1(SyncStep1Inner {
                 doc_id,
@@ -184,35 +238,42 @@ impl ClientRepr {
             }) => {
                 // compute update for peer and our state vector
                 let (update, our_sv) = {
-                    let state_vector = StateVector::decode_v1(&state_vector.as_slice()).context("failed to decode state vector")?;
-                    
+                    let state_vector = StateVector::decode_v1(&state_vector.as_slice())
+                        .context("failed to decode state vector")?;
+
                     let doc = self.doc_provider.get_doc_by_id(doc_id);
                     let txn = doc.ydoc.transact().await;
-                    
-                    (txn.encode_diff_v1(&state_vector),
-                    txn.state_vector().encode_v1())
+
+                    (
+                        txn.encode_diff_v1(&state_vector),
+                        txn.state_vector().encode_v1(),
+                    )
                 };
                 // send missing updates to peer in sync step 2
                 self.send_message(CollabMessageS2C::SyncStep2(SyncStep2Inner {
                     doc_id: doc_id,
-                    update
+                    update,
                 })).await.context("failed to send sync step 2 in response to sync step 1")?;
 
                 // immediately initiate sync step 1 from our side as well to get missing updates from peer
                 self.send_message(CollabMessageS2C::SyncStep1(SyncStep1Inner {
                     doc_id: doc_id,
-                    state_vector: our_sv
+                    state_vector: our_sv,
                 })).await.context("failed to send sync step 2 in response to sync step 1")?;
             }
             CollabMessageC2S::SyncStep2(SyncStep2Inner { doc_id, update }) => {
                 let doc = self.doc_provider.get_doc_by_id(doc_id);
-                doc.integrate_update_v1(update.as_slice()).await.context("integrate sync step 2")?;
+                doc.integrate_update_v1(update.as_slice())
+                    .await
+                    .context("integrate sync step 2")?;
                 // TODO: maybe respond with some sort of sync done indicator (a la SyncStepDone)?
-            },
+            }
             CollabMessageC2S::SyncUpdate(SyncUpdateInner { doc_id, update }) => {
                 let doc = self.doc_provider.get_doc_by_id(doc_id);
-                doc.integrate_update_v1(update.as_slice()).await.context("integrate sync update")?;
-            },
+                doc.integrate_update_v1(update.as_slice())
+                    .await
+                    .context("integrate sync update")?;
+            }
         }
         Ok(())
     }
@@ -270,6 +331,12 @@ impl ClientRepr {
 
 impl Display for ClientRepr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "CollabClient {} @{}, {} active documents", self.client_id, self.ip_addr, self.active_docs.len())
+        write!(
+            f,
+            "CollabClient {} @{}, {} active documents",
+            self.client_id,
+            self.ip_addr,
+            self.active_docs.poisonless_lock().len(),
+        )
     }
 }

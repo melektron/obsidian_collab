@@ -37,7 +37,6 @@ export default class ObsidianCollabPlugin extends Plugin {
 
     async onload() {
         //this.app.emulateMobile();   // @ts-ignore
-        
         let loadingNotice = new InfoNotice("Collab loading...");
 
         // load settings from disk and initialize settings UI
@@ -46,7 +45,7 @@ export default class ObsidianCollabPlugin extends Plugin {
         
         // application components
         this.connection = new Connection(this.settings.serverUrl);
-        this.docManager = new DocManager(this.connection)
+        this.docManager = new DocManager(this.app, this.connection)
 
         // load debug view
         this.registerView(

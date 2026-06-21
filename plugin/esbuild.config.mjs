@@ -37,7 +37,7 @@ const context = await esbuild.context({
 	format: "cjs",
 	target: "es2018",
 	logLevel: "info",
-	sourcemap: prod ? false : "inline",
+	sourcemap: prod ? false : "external",
 	treeShaking: true,
 	outfile: "dist/main.js",
 	minify: prod,

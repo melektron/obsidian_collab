@@ -59,13 +59,7 @@ pub enum CollabMessageS2C {
     /// including a replica ID that can be used to edit the document.
     GetDocResp {
         req_id: u32,
-        doc_id: Uuid,
-
-        /// replica ID that can be used to edit this document.
-        /// This is guaranteed to be unique among all all currently 
-        /// existing replicas (roughly equivalent to all currently
-        /// active and inactive clients)
-        replica_id: u32
+        doc_id: Uuid
     },
 
     SyncStep1(SyncStep1Inner),
