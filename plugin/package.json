@@ -25,6 +25,7 @@
 		"lib0": "^0.2.108",
 		"lucide-react": "^1.16.0",
 		"obsidian": "latest",
+		"quill-delta": "^5.1.0",
 		"react": "^19.2.5",
 		"react-dom": "^19.2.5",
 		"safe-stable-stringify": "^2.5.0",

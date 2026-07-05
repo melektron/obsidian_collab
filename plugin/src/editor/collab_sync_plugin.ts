@@ -340,7 +340,15 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
                 }
             }
 
-            this.editorView.dispatch({ changes, annotations: [collabSyncOriginAnnotation.of(this.editorView)] })
+            this.editorView.dispatch({ changes, annotations: [
+                collabSyncOriginAnnotation.of(this.editorView),
+                // don't add changes made by other clients to the undo history.
+                // This way we get independent undo histories while being able
+                // to re-use the builtin CM6 history used by obsidian and don't
+                // need to somehow implement this using Y.UndoManager.
+                // TODO: observe if this approach causes any problems in the future.
+                cm_state.Transaction.addToHistory.of(false)
+            ] })
         }
     }
 }

@@ -15,6 +15,7 @@ import { App } from "obsidian"
 import { Connection, ConnectionState } from "./networking/connection"
 import { AnyUint8Array } from "./networking/proto_shared"
 import { Listener } from "./networking/event_channel"
+import Delta from "quill-delta"
 
 export type UUID = string
 
@@ -271,10 +272,17 @@ export class TextDocument extends Document {
      * @note It is recommended to wrap this in a transaction
      */
     granularlyReplaceText(newText: string) {
-        // TODO: don't do this, instead create a diff and do a granular update
+        // create a diff and do a granular update
         // https://discuss.yjs.dev/t/does-a-huge-text-with-tiny-changes-overriding-lead-an-entire-document-sync/2461
-        this.textType.delete(0, this.textType.length)
-        this.textType.insert(0, newText)
+        // we use the official quill-delta library which is the delta format Yjs uses.
+        // Delta class also represents the state that can be diffed.
+        let docDelta = new Delta(this.textType.toDelta())
+        let newDelta = new Delta().insert(newText)
+        let difference = docDelta.diff(newDelta)
+        // TODO: check if "retain" diff operations negatively affect text section attributes as
+        // it seems this may set these attributes to {} if none are provided in the diff?
+        // TODO: add attributes needed for attribution here later on
+        this.textType.applyDelta(difference.ops)
     }
 }
 
