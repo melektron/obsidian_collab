@@ -139,7 +139,6 @@ export class WarningNotice extends NoticeWithIcon {
 
 export class InfoNotice extends NoticeWithIcon {
     constructor(message: string | DocumentFragment) {
-        console.log("info notice construct")
         super(message, 0, "info", "collab-info-notice")
     }
 }
@@ -152,7 +151,6 @@ export class DebugNotice extends NoticeWithIcon {
 
 export class LoadingNotice extends NoticeWithIcon {
     constructor(message: string | DocumentFragment) {
-        console.log("loading notice construct")
         super(message, 0, "collab-icon-loading", "collab-loading-notice")
     }
 

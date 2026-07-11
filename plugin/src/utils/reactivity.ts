@@ -14,40 +14,18 @@ Possible alternatives:
 - https://github.com/nanostores/nanostores
 */
 
-import { 
-    ref, 
-    shallowRef, 
-    reactive, 
-    shallowReactive, 
-
+import {
     Ref as VueRef, 
-    ShallowRef, 
-    Reactive,
-    ShallowReactive,
-
+    WatchCallback, 
+    WatchEffect, 
+    WatchOptions, 
+    WatchSource, 
     effect,
-    stop
+    stop,
+    watch
 } from "@vue/reactivity"
 import { useEffect, useState } from "react"
 
-
-
-export {
-    ref,
-    shallowRef,
-    reactive,
-    shallowReactive,
-
-    effect,
-    stop,
-}
-
-export type {
-    VueRef,
-    ShallowRef,
-    Reactive,
-    ShallowReactive
-}
 
 /**
  * Hook to use a Vue ref in a React component.
@@ -68,13 +46,23 @@ export type {
  * @note which ref is passed to the hook
  * is NOT reactive, only the value of the provided
  * ref is observed.
- * @param ref Vue ref to observe
+ * A function can be passed which internally accesses a ref
+ * or reactive state as an alternative to the direct ref.
+ * @param ref Vue ref (or function returning value) to observe
  */
-export function useVueRef<T>(ref: VueRef<T>) {
-    const [value, setValue] = useState<T>(ref.value)
+export function useVueRef<T>(ref: VueRef<T> | (() => T)) {
+
+    let refGetter
+    if (typeof ref !== "function") {
+        refGetter = (() => ref.value)
+    } else {
+        refGetter = ref
+    }
+
+    const [value, setValue] = useState<T>(refGetter())
     useEffect(() => {
         const runner = effect(() => {
-            setValue(ref.value)
+            setValue(refGetter())
         })
         return () => {
             stop(runner)
@@ -84,3 +72,34 @@ export function useVueRef<T>(ref: VueRef<T>) {
     return value
 }
 
+export interface DebouncedWatchOptions extends WatchOptions {
+    debounceMs?: number
+}
+
+/**
+ * Same as vue's watch, except it performs debouncing of
+ * callback invocations. 
+ * The debounce period can be specified via `debounceMs` in `options`
+ * and defaults to 500ms.
+ * @note The debounce implementation is basic, without special handling for
+ * asynchronous callbacks. 
+ */
+export function debouncedWatch(
+    source: WatchSource | WatchSource[] | WatchEffect | object, 
+    cb?: WatchCallback | null,
+    options?: DebouncedWatchOptions
+) {
+    let debounceTimeout: number | null = null
+
+    watch(source, async (value, oldValue, onCleanup) => {
+        if (debounceTimeout !== null) {
+            clearTimeout(debounceTimeout)
+        }
+        debounceTimeout = setTimeout(() => {
+            debounceTimeout = null
+            if (cb) {
+                cb(value, oldValue, onCleanup)
+            }
+        }, options?.debounceMs ?? 500)
+    }, options)
+}

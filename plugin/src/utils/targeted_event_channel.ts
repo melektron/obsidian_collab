@@ -10,7 +10,7 @@ on a specific key in the data.
 Behaves otherwise equivalent to EventChannel.
 */
 
-import { Listener } from "./event_channel";
+import { Listener } from "./event_channel"
 
 
 export class TargetedEventChannel<

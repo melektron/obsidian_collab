@@ -6,22 +6,21 @@ www.elektron.work
 
 */
 
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, Setting, TAbstractFile, TFile, WorkspaceLeaf } from "obsidian";
+import { App, Editor, MarkdownView, Modal, Notice, Plugin, Setting, TAbstractFile, TFile, TFolder, WorkspaceLeaf } from "obsidian";
 import { EditorState, Extension } from "@codemirror/state";
 import { h } from "dom-chef" ;
 import * as random from "lib0/random";
 import * as Y from "yjs";
-import * as awarenessProtocol from "y-protocols/awareness";
-import { WebsocketProvider } from "y-websocket";
 
 import { debugViewPlugin, debugStateField } from "./editor/debug_view_plugin";
-import { CollabSettings, DEFAULT_SETTINGS, CollabSettingTab } from "./settings";
+import { SettingsManager, CollabSettingTab } from "./settings";
 import { DebugNotice, ErrorNotice, InfoNotice, WarningNotice } from "./ui/static_components";
 import { DocManager, docManagerFacet } from "./doc_manager";
 import { editableCompartment, collabSyncPlugin } from "./editor/collab_sync_plugin";
 import { CollabDebugView, VIEW_TYPE_COLLAB_DEBUG_VIEW } from "./ui/debug_view";
 import { Connection } from "./networking/connection";
 import { ChoiceModal, CtaModal } from "./ui/modals";
+import { effect } from "@vue/reactivity";
 
 
 
@@ -29,9 +28,9 @@ import { ChoiceModal, CtaModal } from "./ui/modals";
 
 
 export default class ObsidianCollabPlugin extends Plugin {
-    settings: CollabSettings = DEFAULT_SETTINGS;
     lastEditor: Editor | undefined;
     editorExtensions: Extension[] = [];
+    settings!: SettingsManager;
     connection!: Connection;
     docManager!: DocManager;
 
@@ -40,17 +39,18 @@ export default class ObsidianCollabPlugin extends Plugin {
         let loadingNotice = new InfoNotice("Collab loading...");
 
         // load settings from disk and initialize settings UI
-        await this.loadSettings();
-        this.addSettingTab(new CollabSettingTab(this.app, this));
+        this.settings = new SettingsManager(this)
+        this.addSettingTab(new CollabSettingTab(this.app, this, this.settings))
+        await this.settings.load()
         
         // application components
-        this.connection = new Connection(this.settings.serverUrl);
+        this.connection = new Connection(this.settings.data.serverUrl) // TODO: make handle this differently to react to settings changes
         this.docManager = new DocManager(this.app, this.connection)
 
         // load debug view
         this.registerView(
             VIEW_TYPE_COLLAB_DEBUG_VIEW,
-            (leaf) => new CollabDebugView(leaf, this.connection)
+            (leaf) => new CollabDebugView(leaf, this.settings, this.connection)
         )
         this.addCommand({
             id: "show-debug-view",
@@ -59,7 +59,6 @@ export default class ObsidianCollabPlugin extends Plugin {
                 this.activateDebugView();
             }
         });
-
 
         // register editor extensions to integrate with codemirror
         this.editorExtensions = [
@@ -79,6 +78,36 @@ export default class ObsidianCollabPlugin extends Plugin {
         ];
         this.registerEditorExtension(this.editorExtensions);
 
+        // Add collab file menu options
+        this.registerEvent(
+            this.app.workspace.on('file-menu', (menu, file) => {
+                // for now, we only support sharing markdown files.
+                if (file instanceof TFolder) {
+                    return
+                } else if (file instanceof TFile) {
+                    if (file.extension != "md") return;
+                    menu.addItem((item) => {
+                        item
+                            .setTitle("Share with Collab")
+                            .setIcon("document")
+                            .onClick(async () => {
+                                // TODO: implement the functionality to add to mountpoint index and save that in config.
+                                new Notice(file.path);
+                            });
+                    });
+                    // TODO: Add menu items to stop sharing and so on, possibly with modal to ask whether to also delete
+                    // (should delete from server also be possible? that wouldn't be properly authenticated atm... meaning
+                    // everyone could delete... probably a feature for later once auth works)
+                }
+                
+            })    
+        );
+        // TODO: maybe also add the same actions to the editor menu??
+        this.registerEvent(
+            this.app.workspace.on('editor-menu', (menu, editor, info) => {
+                console.log("editor menu", info)
+            })    
+        );
 
         /**
          * == Experimentation Section ==
@@ -310,12 +339,10 @@ export default class ObsidianCollabPlugin extends Plugin {
         console.log(`rename "${old_path}"->"${file.path}":`, file);
     }
 
-    async loadSettings() {
-        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-    }
-
-    async saveSettings() {
-        await this.saveData(this.settings);
+    onExternalSettingsChange() {
+        console.log("external settings change")
+        // TODO: figure out why this isn't called 
+        this.settings.reload()
     }
 }
 

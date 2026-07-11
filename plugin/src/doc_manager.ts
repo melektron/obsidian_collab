@@ -14,7 +14,7 @@ import { MapKey, ValueMap } from "./utils/valuemap"
 import { App } from "obsidian"
 import { Connection, ConnectionState } from "./networking/connection"
 import { AnyUint8Array } from "./networking/proto_shared"
-import { Listener } from "./networking/event_channel"
+import { Listener } from "./utils/event_channel"
 import Delta from "quill-delta"
 
 export type UUID = string

@@ -8,12 +8,14 @@ View for development and debugging of the plugin
 */
 
 import { ItemView, WorkspaceLeaf } from "obsidian"
-import { createContext, StrictMode, useContext, useEffectEvent, useState } from "react"
+import { ChangeEvent, createContext, StrictMode, useContext, useEffect, useEffectEvent, useState } from "react"
 import { createRoot, Root } from "react-dom/client"
 import { Loader, LucideProvider, Power, Unplug } from "lucide-react"
 
 import { Connection, ConnectionState } from "src/networking/connection";
 import { useVueRef } from "src/utils/reactivity";
+import { SettingsManager } from "src/settings";
+import { toRefs } from "@vue/reactivity";
 
 export const VIEW_TYPE_COLLAB_DEBUG_VIEW = "collab-debug-view";
 
@@ -61,6 +63,15 @@ function DebugView() {
         console.log(resp)
     })
 
+    const reloadSettingsCallback = useEffectEvent(async () => {
+        dbg_view.settings.reload()
+    })
+
+    const collab_url = useVueRef(() => dbg_view.settings.data.serverUrl);
+
+    const settingsTestInputChangeCallback = useEffectEvent(async (e: ChangeEvent<HTMLInputElement>) => {
+    })
+
     const conn_state = useVueRef(dbg_view.connection.state)
     const conn_btn_variant = connectButtonVariants[conn_state]
 
@@ -94,6 +105,14 @@ function DebugView() {
             <button onClick={getDocBtnCallback} className={`collab-button`}>
                 GetDoc
             </button>
+
+            <button onClick={reloadSettingsCallback} className={`collab-button`}>
+                Reload Settings
+            </button>
+            
+            <input type="text" onChange={settingsTestInputChangeCallback}></input>
+
+            {collab_url}
         </div>
     </>
 }
@@ -103,7 +122,7 @@ export class CollabDebugView extends ItemView {
     root: Root | null = null
     icon: string = "bug"
 
-    constructor(leaf: WorkspaceLeaf, public connection: Connection) {
+    constructor(leaf: WorkspaceLeaf, public settings: SettingsManager, public connection: Connection) {
         super(leaf);
     }
 

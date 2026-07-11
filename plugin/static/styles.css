@@ -96,3 +96,72 @@ For error variant, it is provided by default in button.mod-destructive
     --text-color: var(--text-success)
 }
 
+
+/*
+ * === Draggable items === 
+ * (we borrow most classes from obsidian directly,
+ * these are just those that don't work for us.
+*/
+
+.collab-mountpoints-container {
+    /* mark this as a container for container queries */
+    container-type: inline-size;
+}
+.collab-mountpoint-entry {
+    border-top: var(--border-width) solid var(--background-modifier-border);
+}
+.collab-mountpoint-entry:first-child {
+    border-top: none;
+}
+.collab-mountpoint-drag-ghost {
+    /* 
+    based on .drag-reorder-ghost, just with positioning styles removed.
+    Assigned to the same element as .collab-mountpoint-container when dragged
+    */
+    border-radius: var(--radius-s);
+    border-top: none;
+    corner-shape: var(--corner-shape);                            /* obsidian internal var */
+    background-color: var(--background-primary);
+    box-shadow: 0 2px 8px var(--background-modifier-box-shadow);  /* obsidian undocumented internal var */
+    z-index: var(--layer-dragged-item);
+}
+.collab-mountpoint-paths-container {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    /*
+    Alternatively always keep in two rows?
+    flex-direction: column;
+    align-items: start;
+    */
+    flex: 1 0 0;
+    gap: var(--size-4-1);
+}
+@container  (max-width: 25rem) {
+    .collab-mountpoint-entry {
+        padding-block: var(--size-4-3);
+    }
+    .collab-mountpoint-paths-container {
+        flex-direction: column;
+        align-items: start;
+    }
+}
+.collab-mountpoint-paths-container > span {
+    margin-inline: var(--size-4-2);
+}
+.collab-mountpoint-path {
+    flex: 1 0 0;
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+    margin-inline-end: 1rem;
+}
+.collab-mountpoint-path span {
+    flex: 1 0 0;
+    color: var(--text-normal);
+}
+.collab-mountpoint-path code {
+    flex: 1 0 0;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+}

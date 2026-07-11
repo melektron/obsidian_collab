@@ -12,7 +12,6 @@ import * as Y from 'yjs'
 import * as cm_state from '@codemirror/state' // eslint-disable-line
 import * as cm_view from '@codemirror/view' // eslint-disable-line
 import { YRange } from './y-range.js'
-import { Awareness } from 'y-protocols/awareness.js';
 
 import { editorInfoField, MarkdownView, Notice, TFile } from 'obsidian';
 import { DocHandle, DocManager, docManagerFacet, TextDocument } from 'src/doc_manager.js';

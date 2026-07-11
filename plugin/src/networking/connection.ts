@@ -10,10 +10,10 @@ It represents interactions and state related to the server.
 
 import * as c2s from "./proto_c2s"
 import * as s2c from "./proto_s2c"
-import { effect, ref, VueRef } from "../utils/reactivity";
 import { UUID } from "src/doc_manager";
 import { AnyUint8Array, makeRpcChannel } from "./proto_shared";
-import { EventChannel } from "./event_channel";
+import { EventChannel } from "src/utils/event_channel";
+import { effect, Ref, ref } from "@vue/reactivity";
 
 
 enum WsStatusCode {
@@ -41,7 +41,7 @@ export enum ConnectionState {
 
 export class Connection {
     private socket: WebSocket | null = null;
-    public state: VueRef<ConnectionState>
+    public state: Ref<ConnectionState>
 
     public get connected() { return this.state.value === ConnectionState.Connected}
 

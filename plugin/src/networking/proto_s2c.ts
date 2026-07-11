@@ -10,7 +10,7 @@ Server-to-Client messages
 
 import * as z from "zod";
 import { syncStep1Inner, syncStep2Inner, syncStepUpdateInner } from "./proto_shared";
-import { TargetedEventChannel } from "./targeted_event_channel";
+import { TargetedEventChannel } from "../utils/targeted_event_channel";
 
 
 export enum MessageTypeS2C {
