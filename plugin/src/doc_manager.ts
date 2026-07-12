@@ -14,7 +14,7 @@ import { MapKey, ValueMap } from "./utils/valuemap"
 import { App } from "obsidian"
 import { Connection, ConnectionState } from "./networking/connection"
 import { AnyUint8Array } from "./networking/proto_shared"
-import { Listener } from "./utils/event_channel"
+import { EventChannel, Listener } from "./utils/event_channel"
 import Delta from "quill-delta"
 import { debouncedWatch } from "./utils/reactivity"
 import { SettingsManager } from "./settings"
@@ -293,16 +293,16 @@ export class TextDocument extends Document {
 }
 
 export class DocManager {
-    mountpointIndex: Map<string, DocumentIdentifier>
+    private mountpointIndex: Map<string, DocumentIdentifier>
     private activeDocs: ValueMap<DocumentIdentifier, TextDocument>
     private handleToDocId: Map<DocHandle, DocumentIdentifier>
     private nextDocHandle: DocHandle = 0;
     
     constructor(
         private readonly log: Logger,
-        readonly app: App,
-        readonly settings: SettingsManager,
-        readonly connection: Connection
+        private readonly app: App,
+        private readonly settings: SettingsManager,
+        private readonly connection: Connection
     ) {
         this.mountpointIndex = new Map([
             ["My folder/Testsubfile.md", new DocumentIdentifier("00000000-0000-4000-8000-000000000001", new URL("http://localhost:1234/collab"))],
@@ -314,22 +314,48 @@ export class DocManager {
         this.activeDocs = new ValueMap()
         this.handleToDocId = new Map()
         
-        // update mountpoint index if mountpoints change.
-        effect(() => {
-            let _ = this.settings.data.mountPoints
-            this.log.debug("Mountpoints changed, updating index")
-            this.updateMountpointIndex()
-        })
-    }
-
+        // load mountpoint index and update it if settings are changed.
+        this.updateMountpointIndex()
+        this.settings.updatedEvent.on(() => this.updateMountpointIndex())
+    }    
+    
     private updateMountpointIndex() {
+        this.log.debug("Settings changed, updating mountpoint index")
+        
+        this.mountpointIndex = new Map(
+            this.settings.data.mountPoints.map(mp => [
+                mp.path, 
+                new DocumentIdentifier(mp.doc, new URL(this.settings.data.serverUrl))
+            ])
+        )
 
+        this.reconsiderBindingEvent.emit()
     }
-
+    
     private allocateHandle(): DocHandle {
         return this.nextDocHandle++
     }
     
+    /**
+     * Event fired whenever editors should reconsider their
+     * binding to a collab document, e.g. because the mountpoint
+     * index was modified.
+     */
+    public reconsiderBindingEvent = new EventChannel()
+
+    /**
+     * Checks whether a specific `path` maps to a
+     * collab text document. Useful when
+     * reconsidering an active editor binding
+     * without triggering a potential load or handle creation.
+     * 
+     * @returns true if the path maps to a text document
+     */
+    checkTextDocument(path: string): boolean {
+        return this.mountpointIndex.has(path)
+        // TODO: later implement some sort of system to differentiate between doc types at this level
+    }
+
     resolveTextDocument(path: string): [TextDocument, DocHandle] | [null, null] {
         // mountpoint lookup (TODO: do with real mountpoint table)
         const docId = this.mountpointIndex.get(path) ?? null

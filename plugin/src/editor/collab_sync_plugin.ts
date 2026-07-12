@@ -18,6 +18,7 @@ import { DocHandle, DocManager, docManagerFacet, TextDocument } from 'src/doc_ma
 import { ErrorNotice, InfoNotice, LoadingNotice, WarningNotice } from 'src/ui/static_components.js';
 import { ChoiceModal } from 'src/ui/modals.js';
 import { Logger, loggerFacet } from 'src/utils/logger.js';
+import { Listener } from 'src/utils/event_channel.js';
 
 
 export const collabSyncOriginAnnotation = cm_state.Annotation.define()
@@ -45,9 +46,15 @@ type ActiveState = {
 
 class CollabSyncPluginValue implements cm_view.PluginValue {
     private readonly log: Logger
+    private readonly docManager: DocManager
+    private readonly reconsiderListener: Listener
+
     // set true when the editor is destroyed, to prevent activation
     // after being destroyed
     destroyed: boolean = false;
+    // set to true while the activation is running in the background
+    // to avoid multiple parallel async calls to activate()
+    activationInProgress: boolean = false;
     // whether the sync plugin is active in this editor.
     // only if this is true are the following members
     // guaranteed to be initialized and may be used.
@@ -59,17 +66,13 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
         private editorView: cm_view.EditorView
     ) {
         this.log = this.editorView.state.facet(loggerFacet)
+        this.docManager = this.editorView.state.facet(docManagerFacet)
         // start activation in the background
-        this.activate()
-            .catch((reason) => {
-                new ErrorNotice(`Initialization of collab editor failed unexpectedly: ${reason}`)
-                // make editor editable as to not interfere with it anymore
-                this.makeEditable()
-                // deactivate it in case the error happened after activation
-                this.deactivate()
-            })
-
-        // TODO: listen for changes to mountpoint index from doc manager to re-evaluate if document should be synced
+        this.activateInBackground()
+            
+        // listen for reconsideration events in case something changes
+        // that might lead to the syncing status changing
+        this.reconsiderListener = this.docManager.reconsiderBindingEvent.on(() => this.reconsiderBinding())
     }
 
     /**
@@ -226,6 +229,22 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
         this.makeEditable()
     }
 
+    private activateInBackground() {
+        this.activationInProgress = true
+
+        this.activate()
+            .catch((reason) => {
+                new ErrorNotice(`Initialization of collab editor failed unexpectedly: ${reason}`)
+                // make editor editable as to not interfere with it anymore
+                this.makeEditable()
+                // deactivate it in case the error happened after activation
+                this.deactivate()
+            })
+            .finally(() => {
+                this.activationInProgress = false
+            })
+    }
+
     replaceEditorText(newText: string) {
         if (this.destroyed) return
 
@@ -244,7 +263,7 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
     }
 
     /**
-     * disables readOnly on the editor, which was set by default
+     * disables readOnly on the editor, which was enabled by default.
      */
     protected makeEditable() {
         queueMicrotask(() => {
@@ -253,6 +272,21 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
             this.editorView.dispatch({
                 effects: editableCompartment.reconfigure([
                     cm_state.EditorState.readOnly.of(false)
+                ])
+            })
+        })
+    }
+
+    /**
+     * enables readOnly on the editor in case it was disabled.
+     */
+    protected makeReadOnly() {
+        queueMicrotask(() => {
+            if (this.destroyed) return;
+            // make editor editable as to not interfere with it anymore
+            this.editorView.dispatch({
+                effects: editableCompartment.reconfigure([
+                    cm_state.EditorState.readOnly.of(true)
                 ])
             })
         })
@@ -267,9 +301,48 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
     // interface implementation
     destroy() {
         this.destroyed = true;
+        this.docManager.reconsiderBindingEvent.off(this.reconsiderListener)
         this.deactivate()
     }
     
+    protected reconsiderBinding() {
+        // TODO: maybe this should also be triggered when a file is renamed/moved in the future?
+
+        if (this.state.active) {
+            // check if the editor should still be active
+
+            // determine what file is opened in the editor
+            let editorInfo = this.editorView.state.field(editorInfoField);
+            if (!editorInfo.file) {
+                new ErrorNotice("Collab can not determine which file is open anymore. This editor will stop syncing.");
+                this.deactivate();
+                return;
+            }
+            const file = editorInfo.file
+            
+            // if this doc is no longer active, we deactivate syncing for this editor
+            if (!this.docManager.checkTextDocument(file.path)) {
+                this.log.info(`Disabled syncing for editor of ${file.path} after reconsideration`)
+                this.deactivate();
+                return;
+            }
+
+            // should associated with document, stay active.
+
+        } else {
+            // try activating in the background again to determine if we maybe
+            // should activate now.
+            if (!this.activationInProgress) {
+                // first make editor read only so our offline merging
+                // can work undisturbed
+                this.makeReadOnly()
+                this.activateInBackground()
+            } 
+            // TODO: what should happen if an activation is already in progress?
+            // should we wait for it to finish?
+        }
+    }
+
     /**
      * Deactivates the plugin by removing the 
      * CRDT->editor binding and sets the active flag 
