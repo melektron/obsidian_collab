@@ -8,14 +8,16 @@ Plugin Settings
 */
 
 
-import { AbstractInputSuggest, addIcon, App, FuzzyMatch, PluginSettingTab, prepareFuzzySearch, SearchComponent, setIcon, SettingGroup, setTooltip, sortSearchResults, SuggestModal } from "obsidian";
-import { effect, Reactive, reactive, Ref, ref, toRaw, watch } from "@vue/reactivity";
+import { App, debounce, FuzzyMatch, PluginSettingTab, prepareFuzzySearch, setIcon, SettingGroup, setTooltip, sortSearchResults } from "obsidian";
 import z from "zod";
 import Sortable from "sortablejs";
-import type CollabPlugin from "./main"
+import type CollabPlugin from "./main";
+import type { ReadonlyDeep } from "type-fest";
 import { WarningNotice } from "./ui/static_components";
 import { FileInputSuggest } from "./utils/file_suggest";
-import { debouncedWatch } from "./utils/reactivity";
+import { EventChannel } from "./utils/event_channel";
+import { createContext } from "react";
+import { Logger } from "./utils/logger";
 
 
 const collabSettingsValidator = z.object({
@@ -31,12 +33,13 @@ export type CollabSettings = z.infer<typeof collabSettingsValidator>;
 
 export class SettingsManager {
     public parsingIssues: z.core.$ZodIssue[] | string| null = null
-    #data: Reactive<CollabSettings> | null = null
+    #data: CollabSettings | null = null
+    public readonly updatedEvent: EventChannel<ReadonlyDeep<CollabSettings>> = new EventChannel()
     
-    // Provides access to a mutable settings object.
-    // The mutable object is reactive and property access 
-    // can be tracked with `effect()` or `watch()`
-    get data(): CollabSettings { 
+    // Provides access to the settings data. This must not be
+    // mutated directly. Use `update()` to mutate the settings.
+    // Use `updatedEvent.on()` to observe changes to the object.
+    get data(): ReadonlyDeep<CollabSettings> { 
         if (this.#data === null)
             throw new Error("Settings accessed before initialization")
         return this.#data
@@ -44,6 +47,7 @@ export class SettingsManager {
 
 
     constructor(
+        private log: Logger,
         private plugin: CollabPlugin
     ) {}
 
@@ -59,7 +63,7 @@ export class SettingsManager {
         } catch (error) {
             // load defaults 
             settings = collabSettingsValidator.parse({})
-            console.log(error)
+            this.log.error("loading failed:", error)
 
             if (error instanceof z.ZodError) {
                 new WarningNotice("Collab configuration is invalid, reverting to defaults. See settings for details and a backup.")
@@ -71,19 +75,14 @@ export class SettingsManager {
             }
         }
 
-        // stores the settings as a reactive ref.
-        // Note: We don't use reactive because that doesn't allow reactively reloading
-        // the entire settings object
-        this.#data = reactive(settings);
+        // stores the settings. This is no longer
+        // reactive as deep reactivity proved to be unreliable.
+        this.#data = settings;
 
         // immediately save the settings in case anything was changed/cleaned up during loading
         await this.save()
 
-        // autosave settings when settings are mutated
-        debouncedWatch(this.#data, async () => {
-            console.log("settings changed, saving")
-            this.save()
-        })
+        //
     }
 
     // Reloads the settings from disk in a reactive manner
@@ -93,34 +92,59 @@ export class SettingsManager {
 
         try {
             // try to reload the settings
-            let newSettings = collabSettingsValidator.parse(await this.plugin.loadData())
-            // delete removed keys (only relevant if there are any optional settings)
-            Object.keys(this.#data).forEach(key => {
-                if (this.#data === null) return;
-                if (!(key in newSettings)) delete (this.#data as any)[key]
-            })
-            // copy properties while keeping original reactive proxy
-            Object.assign(this.#data, newSettings)
+            this.#data = collabSettingsValidator.parse(await this.plugin.loadData())
+            // inform subscribers but don't save, as we just reloaded.
+            this.updatedEvent.emit(this.data)
         } catch (error) {
             // if it fails, just do nothing. In this case we keep the current settings
-            console.error("Collab settings reload failed: ", error)
+            this.log.error("reload failed: ", error)
             new WarningNotice("Collab configuration is invalid, cannot reload. See console for details.").hideAfter(3)
         }
     }
 
+    /**
+     * Calls `updater` with a mutable reference
+     * to the settings object, allowing changes to be made.
+     * After `updater` returns, all update subscribers are
+     * notified and the changes are saved to disk.
+     * 
+     * @note It is advised to batch related updates in a single
+     * call ("atomic") to avoid event spam or 
+     * 
+     * @param updater Callback to modify settings. Must not be
+     * async, as changes have to be applied immediately before
+     * returning. Async functions would break the "atomic" guarantee.
+     */
+    update(updater: (cfg: CollabSettings) => any) {
+        if (this.#data === null)
+            throw new Error("Settings updated before initialization")
+        // invoke updater with mutable settings
+        updater(this.#data)
+        // inform subscribers and save changes
+        this.updatedEvent.emit(this.data)
+        this.log.info("settings changed, saving")
+        this.save()
+    }
+
     // Writes the settings to disk using obsidian's builtin data API.
-    // When mutating settings data, this happens automatically, no need
-    // for a separate call.
+    // When mutating settings data with `update()` this happens automatically, 
+    // no need for a separate call.
     async save() {
-        await this.plugin.saveData(toRaw(this.data));
+        await this.plugin.saveData(this.data);
     }
 }
+// Context to access settings from react hooks
+export const SettingsContext = createContext<SettingsManager>(null!);
 
-type MountPointDefinition = CollabSettings["mountPoints"][0]
+type MountPointDefinition = ReadonlyDeep<CollabSettings["mountPoints"][0]>
 
 export class CollabSettingTab extends PluginSettingTab {
 
-    constructor(app: App, plugin: CollabPlugin, private settings: SettingsManager) {
+    constructor(
+        private readonly log: Logger,
+        app: App, 
+        plugin: CollabPlugin, 
+        private settings: SettingsManager) {
         super(app, plugin);
     }
 
@@ -138,8 +162,10 @@ export class CollabSettingTab extends PluginSettingTab {
                 .addText(text => text
                     .setPlaceholder("wss://collab.ppc.social/collab")
                     .setValue(this.settings.data.serverUrl)
-                    .onChange(async (value) => {
-                        this.settings.data.serverUrl = value;
+                    .onChange((value) => {
+                        this.settings.update(cfg => {
+                            cfg.serverUrl = value
+                        });
                     }))
             )
             .addSetting(setting => setting
@@ -151,32 +177,27 @@ export class CollabSettingTab extends PluginSettingTab {
                     new FileInputSuggest(this.app, text.inputEl)
                         .onlyFolders()
                         .onlyFiles()
-                        .allowNullSelection((ni) => {console.log("selected nonexistent item:", ni)})
+                        .allowNullSelection((ni) => {this.log.experiment("selected nonexistent item:", ni)})
                 })
             )
         
 
         // mount points
 
-        let mountpointSearch: SearchComponent
         const mountpointGroup = new SettingGroup(containerEl)
             .setHeading("Shared notes")
             .addSearch(sc => {
-                mountpointSearch = sc;
                 sc.setPlaceholder("Filter")
                 sc.onChange(value => {
                     // repaint mount points with new filter
                     this.displayMountpoints(mountpointContainer, value)
                 })
-                sc.inputEl.addEventListener("ended", _ => {
-                    console.log("Submitted:", sc.getValue())
-                })
             })
             .addExtraButton(eb => eb
                 .setIcon("plus")
-                .setTooltip("")
+                .setTooltip("Add shared note")
                 .onClick(() => {
-                    // TODO: this is for testing, eventually show dialog here
+                    // TODO: Show modal for creating new mountpoint
                     //this.settings.data.mountPoints.push({
                     //    path: mountpointSearch.getValue(),
                     //    doc: "00000000-0000-4000-8000-000000000001"
@@ -188,6 +209,7 @@ export class CollabSettingTab extends PluginSettingTab {
             )
             .addExtraButton(eb => eb
                 .setIcon("link")
+                .setTooltip("Import share link")
             )
         const mountpointContainer = mountpointGroup.listEl.createDiv("collab-mountpoints-container")
         this.displayMountpoints(mountpointContainer)
@@ -208,7 +230,7 @@ export class CollabSettingTab extends PluginSettingTab {
         container.empty()
         
         const isFiltered = query.length > 0
-        let mountPoints: MountPointDefinition[]
+        let mountPoints: ReadonlyDeep<MountPointDefinition[]>
         if (isFiltered) {
             // fuzzy search if a search query is passed
             const search = prepareFuzzySearch(query)
@@ -254,7 +276,9 @@ export class CollabSettingTab extends PluginSettingTab {
                     setIcon(t, "lucide-x")
                     setTooltip(t, "Delete Mountpoint")
                     t.onClickEvent(() => {
-                        this.settings.data.mountPoints.remove(mountpoint)
+                        this.settings.update(cfg => {
+                            cfg.mountPoints.remove(mountpoint)
+                        })
                         // after removing a mountpoint we repaint only the 
                         // mountpoint list, so that the search entry state is retained
                         this.displayMountpoints(container, query)
@@ -274,15 +298,18 @@ export class CollabSettingTab extends PluginSettingTab {
         if (!isFiltered) {
             // for reordering we add new logic based on sortablejs, as obsidian's logic
             // is not accessible to plugins. (This is also more responsive)
+            // TODO: This seems to have a problem with running on iOS (drag ghost is not properly visible), fix that
             new Sortable(container, {
                 handle: ".mobile-option-setting-drag-icon",
                 ghostClass: "drag-ghost-hidden",
                 dragClass: "collab-mountpoint-drag-ghost",
                 onEnd: e => {
                     if (e.oldIndex === e.newIndex || e.oldIndex === undefined || e.newIndex === undefined) return;
-                    const movedEntry = this.settings.data.mountPoints[e.oldIndex]
-                    this.settings.data.mountPoints.remove(movedEntry)
-                    this.settings.data.mountPoints.splice(e.newIndex, 0, movedEntry)
+                    const oldIndex = e.oldIndex, newIndex = e.newIndex
+                    this.settings.update(cfg => {
+                        const [movedEntry] = cfg.mountPoints.splice(oldIndex, 1)
+                        cfg.mountPoints.splice(newIndex, 0, movedEntry)
+                    })
                     // no need to repaint here as Sortable already adjusted the UI
                 }
             })

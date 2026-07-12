@@ -16,6 +16,10 @@ import { Connection, ConnectionState } from "./networking/connection"
 import { AnyUint8Array } from "./networking/proto_shared"
 import { Listener } from "./utils/event_channel"
 import Delta from "quill-delta"
+import { debouncedWatch } from "./utils/reactivity"
+import { SettingsManager } from "./settings"
+import { effect } from "@vue/reactivity"
+import { Logger } from "./utils/logger"
 
 export type UUID = string
 
@@ -69,6 +73,7 @@ export class Document {
     // TODO: question: is this even needed? on first load, the _remoteSyncingEnabled is always set immediately, so that would be enough. When remote sync is active already, always ask user about how they want to merge
 
     constructor(
+        protected readonly log: Logger,
         readonly app: App,
         readonly connection: Connection,
         readonly uuid: string,
@@ -83,11 +88,11 @@ export class Document {
         this.localPersistence.whenSynced
         this.loadedPromise = new Promise((resolve, _) => {
             this.localPersistence.on("synced", () => {
-                console.log(`Doc ${uuid} loaded from local DB`)
+                this.log.debug(`Doc ${uuid} loaded from local DB`)
                 // introducing dummy loading delay TODO: remove this later
-                console.info("Simulating loading delay...");
+                this.log.debug("Simulating loading delay...");
                 setTimeout(() => {
-                    console.info("Dummy delay over, doc loaded");
+                    this.log.debug("Dummy delay over, doc loaded");
                     this.onLoaded()
                     this.#loaded = true;
                     resolve(null)
@@ -131,7 +136,7 @@ export class Document {
      * (including because it was already active)
      */
     public startSyncing(): boolean {
-        console.log("trie to start syncing")
+        this.log.debug("trie to start syncing")
         // if syncing is not enabled, we do nothing
         if (!this.syncingEnabled) return false
         // if syncing is already active, we do nothing
@@ -178,7 +183,7 @@ export class Document {
      * is restored.
      */
     public stopSyncing() {
-        console.log("trie stop syncing")
+        this.log.debug("trie stop syncing")
         if (!this.#syncingActive) return
         
         // disable all the event listeners
@@ -249,19 +254,20 @@ export class TextDocument extends Document {
     //fresh: boolean = true
 
     constructor(
+        log: Logger,
         app: App,
         connection: Connection,
         uuid: string,
     ) {
-        super(app, connection, uuid)
+        super(log, app, connection, uuid)
         this.textType = this.crdtDoc.getText("text-file-content")
     }
 
     protected override onLoaded(): void {
-        console.log(`Doc Value: ${this.textType.toString()}`)
+        this.log.debug(`Doc Value: ${this.textType.toString()}`)
 
         this.textType.observe((e, tr) => {
-            console.log(`${this.uuid} changed: ${this.textType.toString()}`);
+            this.log.debug(`${this.uuid} changed: ${this.textType.toString()}`);
         })
     }
 
@@ -293,7 +299,9 @@ export class DocManager {
     private nextDocHandle: DocHandle = 0;
     
     constructor(
+        private readonly log: Logger,
         readonly app: App,
+        readonly settings: SettingsManager,
         readonly connection: Connection
     ) {
         this.mountpointIndex = new Map([
@@ -305,6 +313,17 @@ export class DocManager {
         ])
         this.activeDocs = new ValueMap()
         this.handleToDocId = new Map()
+        
+        // update mountpoint index if mountpoints change.
+        effect(() => {
+            let _ = this.settings.data.mountPoints
+            this.log.debug("Mountpoints changed, updating index")
+            this.updateMountpointIndex()
+        })
+    }
+
+    private updateMountpointIndex() {
+
     }
 
     private allocateHandle(): DocHandle {
@@ -320,7 +339,7 @@ export class DocManager {
         let doc = this.activeDocs.get(docId) ?? null
         if (doc === null) {
             // document is not active, load it from local persistence
-            doc = new TextDocument(this.app, this.connection, docId.uuid)
+            doc = new TextDocument(this.log.child("doc"), this.app, this.connection, docId.uuid)
             this.activeDocs.set(docId, doc)
         };
 
@@ -338,7 +357,7 @@ export class DocManager {
         // we ignore it but print warning as it is a sign of a bug
         const docId = this.handleToDocId.get(handle)
         if (docId === undefined) {
-            console.warn("Attempted release of unknown handle, ignoring")
+            this.log.warn("Attempted release of unknown handle, ignoring")
             return
         };
         // get the doc
@@ -354,7 +373,7 @@ export class DocManager {
         if (doc[docHandles].length !== 0) return;
         
         // Document has no more handles, so it must be destroyed
-        console.log("destroying document", docId)
+        this.log.debug("destroying document", docId)
         doc.destroy()
         this.activeDocs.delete(docId)
     }

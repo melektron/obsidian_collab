@@ -13,9 +13,10 @@ import { createRoot, Root } from "react-dom/client"
 import { Loader, LucideProvider, Power, Unplug } from "lucide-react"
 
 import { Connection, ConnectionState } from "src/networking/connection";
-import { useVueRef } from "src/utils/reactivity";
-import { SettingsManager } from "src/settings";
+import { useSetting, useVueRef } from "src/utils/reactivity";
+import { SettingsContext, SettingsManager } from "src/settings";
 import { toRefs } from "@vue/reactivity";
+import { Logger } from "src/utils/logger";
 
 export const VIEW_TYPE_COLLAB_DEBUG_VIEW = "collab-debug-view";
 
@@ -60,14 +61,15 @@ function DebugView() {
             doc_id: "00000000-0000-4000-8000-000000000002"
         })
 
-        console.log(resp)
+        dbg_view.log.experiment(resp)
     })
 
     const reloadSettingsCallback = useEffectEvent(async () => {
         dbg_view.settings.reload()
     })
 
-    const collab_url = useVueRef(() => dbg_view.settings.data.serverUrl);
+    const collab_url = useSetting((cfg) => cfg.serverUrl);
+    const mountpoints = useSetting((cfg) => cfg.mountPoints);
 
     const settingsTestInputChangeCallback = useEffectEvent(async (e: ChangeEvent<HTMLInputElement>) => {
     })
@@ -113,6 +115,10 @@ function DebugView() {
             <input type="text" onChange={settingsTestInputChangeCallback}></input>
 
             {collab_url}
+            
+            <ul>
+                { mountpoints.map(mp => <li key={mp.path} >{mp.path}</li>) }
+            </ul>
         </div>
     </>
 }
@@ -122,7 +128,12 @@ export class CollabDebugView extends ItemView {
     root: Root | null = null
     icon: string = "bug"
 
-    constructor(leaf: WorkspaceLeaf, public settings: SettingsManager, public connection: Connection) {
+    constructor(
+        leaf: WorkspaceLeaf, 
+        public readonly log: Logger,
+        public settings: SettingsManager, 
+        public connection: Connection
+    ) {
         super(leaf);
     }
 
@@ -139,9 +150,11 @@ export class CollabDebugView extends ItemView {
         this.root.render(
             <StrictMode>
                 <LucideProvider size={"1em" as unknown as number}>
-                    <CollabDebugViewContext value={this}>
-                        <DebugView />
-                    </CollabDebugViewContext>
+                    <SettingsContext value={this.settings}>
+                        <CollabDebugViewContext value={this}>
+                            <DebugView />
+                        </CollabDebugViewContext>
+                    </SettingsContext>
                 </LucideProvider>
             </StrictMode>
         )

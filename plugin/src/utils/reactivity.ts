@@ -24,7 +24,9 @@ import {
     stop,
     watch
 } from "@vue/reactivity"
-import { useEffect, useState } from "react"
+import { useContext, useEffect, useMemo, useReducer, useState, useSyncExternalStore } from "react"
+import { SettingsContext, CollabSettings } from "src/settings"
+import { ReadonlyDeep } from "type-fest"
 
 
 /**
@@ -70,6 +72,58 @@ export function useVueRef<T>(ref: VueRef<T> | (() => T)) {
     }, [])
 
     return value
+}
+
+/**
+ * Use a setting value in a reactive manner.
+ * 
+ * Example:
+ * ```js
+ * const url = useSetting(cfg => cfg.serverUrl)
+ * ```
+ * 
+ * @note 
+ * - the `SettingsContext` must be available.
+ * - the `selector` function must not depend on any reactive
+ *   or ideally any outside state. Changes to the getter will not
+ *   properly be reflected in the result.
+ * 
+ * 
+ * @param selector function that receives the settings as `cfg` 
+ * and must return the desired settings property.
+ * @returns Reactive settings property.
+ * 
+ */
+export function useSetting<T>(selector: (cfg: ReadonlyDeep<CollabSettings>) => T) {
+    const settings = useContext(SettingsContext)
+    // the settings may be mutated in a way that can't be compared, 
+    // so we always force an update when settings change. They don't change
+    // too regularly anyway.
+    const [, forceUpdate] = useReducer(x => x + 1, 0);
+    
+    useEffect(() => {
+        const listener = settings.updatedEvent.on(cfg => {
+            forceUpdate()
+        })
+        return () => {
+            settings.updatedEvent.off(listener)
+        }
+    }, [])
+    
+    return selector(settings.data)
+
+    // we do not use useSyncExternalStore as our settings object
+    // is mutated which wouldn't always be picked up by that.
+    // Without it we have the small downside of any (possibly insignificant)
+    // settings change may trigger a rerender, but settings shouldn't change often anyway.
+    
+    //return useSyncExternalStore(
+    //    (onStoreChange) => {
+    //        const listener = settings.updatedEvent.on(onStoreChange);
+    //        return () => settings.updatedEvent.off(listener);
+    //    },
+    //    () => selector(settings.data),
+    //);
 }
 
 export interface DebouncedWatchOptions extends WatchOptions {

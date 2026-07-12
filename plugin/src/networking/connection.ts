@@ -14,6 +14,7 @@ import { UUID } from "src/doc_manager";
 import { AnyUint8Array, makeRpcChannel } from "./proto_shared";
 import { EventChannel } from "src/utils/event_channel";
 import { effect, Ref, ref } from "@vue/reactivity";
+import { Logger } from "src/utils/logger";
 
 
 enum WsStatusCode {
@@ -49,11 +50,12 @@ export class Connection {
     public connectedEvent = new EventChannel()
 
     constructor(
+        private log: Logger,
         private url: string
     ) {
         this.state = ref(ConnectionState.Disconnected)
         effect(() => {
-            console.log("ConnectionState:", this.state.value)
+            this.log.info("ConnectionState:", this.state.value)
         })
 
     }
@@ -65,12 +67,12 @@ export class Connection {
         this.state.value = ConnectionState.Connecting
 
         this.socket.onopen = (e) => {
-            console.log("WS open:", e)
+            this.log.debug("WS open:", e)
             this.state.value = ConnectionState.Connected
             this.connectedEvent.emit()
         }
         this.socket.onclose = (e) => {
-            console.log("WS close:", e)
+            this.log.debug("WS close:", e)
             this.socket = null;
 
             // cancel all active RPC calls
@@ -83,10 +85,10 @@ export class Connection {
             this.disconnectEvent.emit()
         }
         this.socket.onerror = (e) => {
-            console.log("WS error:", e)
+            this.log.debug("WS error:", e)
         }
         this.socket.onmessage = (e) => {
-            console.log("WS message:", e)
+            this.log.debug("WS message:", e)
             if (typeof (e.data) !== "string") {
                 this.panic(WsStatusCode.Unsupported, "received non-text message")
                 return
@@ -134,7 +136,7 @@ export class Connection {
     }
 
     private panic(code: WsStatusCode, reason: string) {
-        console.error(`WS panic: ${reason}, disconnecting ${this.url} with ${code} (${WsStatusCode[code]})`)
+        this.log.error(`WS panic: ${reason}, disconnecting ${this.url} with ${code} (${WsStatusCode[code]})`)
         if (this.socket == null) return;
         this.socket.close(code, reason)
     }

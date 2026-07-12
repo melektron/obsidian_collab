@@ -17,6 +17,7 @@ import { editorInfoField, MarkdownView, Notice, TFile } from 'obsidian';
 import { DocHandle, DocManager, docManagerFacet, TextDocument } from 'src/doc_manager.js';
 import { ErrorNotice, InfoNotice, LoadingNotice, WarningNotice } from 'src/ui/static_components.js';
 import { ChoiceModal } from 'src/ui/modals.js';
+import { Logger, loggerFacet } from 'src/utils/logger.js';
 
 
 export const collabSyncOriginAnnotation = cm_state.Annotation.define()
@@ -43,6 +44,7 @@ type ActiveState = {
 }
 
 class CollabSyncPluginValue implements cm_view.PluginValue {
+    private readonly log: Logger
     // set true when the editor is destroyed, to prevent activation
     // after being destroyed
     destroyed: boolean = false;
@@ -56,6 +58,7 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
     constructor(
         private editorView: cm_view.EditorView
     ) {
+        this.log = this.editorView.state.facet(loggerFacet)
         // start activation in the background
         this.activate()
             .catch((reason) => {
@@ -65,6 +68,8 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
                 // deactivate it in case the error happened after activation
                 this.deactivate()
             })
+
+        // TODO: listen for changes to mountpoint index from doc manager to re-evaluate if document should be synced
     }
 
     /**
@@ -97,7 +102,7 @@ class CollabSyncPluginValue implements cm_view.PluginValue {
             return;
         }
 
-        console.log("Associated with item");
+        this.log.info("Associated with item");
 
         // wait until the document is loaded (at least from local persistence)
         // TODO: show some sort of syncing animation somewhere on the editor while waiting for load

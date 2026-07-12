@@ -12,7 +12,6 @@ import { h } from "dom-chef" ;
 import * as random from "lib0/random";
 import * as Y from "yjs";
 
-import { debugViewPlugin, debugStateField } from "./editor/debug_view_plugin";
 import { SettingsManager, CollabSettingTab } from "./settings";
 import { DebugNotice, ErrorNotice, InfoNotice, WarningNotice } from "./ui/static_components";
 import { DocManager, docManagerFacet } from "./doc_manager";
@@ -20,8 +19,7 @@ import { editableCompartment, collabSyncPlugin } from "./editor/collab_sync_plug
 import { CollabDebugView, VIEW_TYPE_COLLAB_DEBUG_VIEW } from "./ui/debug_view";
 import { Connection } from "./networking/connection";
 import { ChoiceModal, CtaModal } from "./ui/modals";
-import { effect } from "@vue/reactivity";
-
+import { Logger, loggerFacet } from "./utils/logger";
 
 
 // Remember to rename these classes and interfaces!
@@ -30,27 +28,51 @@ import { effect } from "@vue/reactivity";
 export default class ObsidianCollabPlugin extends Plugin {
     lastEditor: Editor | undefined;
     editorExtensions: Extension[] = [];
+    log!: Logger;
     settings!: SettingsManager;
     connection!: Connection;
     docManager!: DocManager;
 
     async onload() {
-        //this.app.emulateMobile();   // @ts-ignore
+        this.log = new Logger("collab")
+
+        this.log.info("Collab loading")
         let loadingNotice = new InfoNotice("Collab loading...");
 
         // load settings from disk and initialize settings UI
-        this.settings = new SettingsManager(this)
-        this.addSettingTab(new CollabSettingTab(this.app, this, this.settings))
+        this.settings = new SettingsManager(
+            this.log.child("settings"),
+            this
+        )
         await this.settings.load()
+        this.addSettingTab(new CollabSettingTab(
+            this.log.child("settings-tab"),
+            this.app, 
+            this, 
+            this.settings
+        ))
         
         // application components
-        this.connection = new Connection(this.settings.data.serverUrl) // TODO: make handle this differently to react to settings changes
-        this.docManager = new DocManager(this.app, this.connection)
+        this.connection = new Connection(
+            this.log.child("conn"),
+            this.settings.data.serverUrl
+        ) // TODO: make handle this differently to react to settings changes
+        this.docManager = new DocManager(
+            this.log.child("docmgr"),
+            this.app, 
+            this.settings, 
+            this.connection
+        )
 
         // load debug view
         this.registerView(
             VIEW_TYPE_COLLAB_DEBUG_VIEW,
-            (leaf) => new CollabDebugView(leaf, this.settings, this.connection)
+            (leaf) => new CollabDebugView(
+                leaf, 
+                this.log.child("dbg-view"), 
+                this.settings, 
+                this.connection
+            )
         )
         this.addCommand({
             id: "show-debug-view",
@@ -66,6 +88,7 @@ export default class ObsidianCollabPlugin extends Plugin {
             //debugStateField,
             // provide access to the required subsystems to all editors
             docManagerFacet.of(this.docManager),
+            loggerFacet.of(this.log.child("editor")),
             // add collab sync plugin to all editors
             collabSyncPlugin,
             // make all editors readonly by default, only enabling
@@ -105,7 +128,7 @@ export default class ObsidianCollabPlugin extends Plugin {
         // TODO: maybe also add the same actions to the editor menu??
         this.registerEvent(
             this.app.workspace.on('editor-menu', (menu, editor, info) => {
-                console.log("editor menu", info)
+                this.log.debug("editor menu", info)
             })    
         );
 
@@ -159,7 +182,7 @@ export default class ObsidianCollabPlugin extends Plugin {
             id: "sample-editor-command",
             name: "Sample editor command",
             editorCallback: (editor: Editor, view) => {
-                console.log(editor.getSelection());
+                this.log.experiment(editor.getSelection());
                 editor.replaceSelection("Sample Editor Command2");
             }
         });
@@ -186,7 +209,7 @@ export default class ObsidianCollabPlugin extends Plugin {
                             .setContent("This action is destructive. Do you really want to do it?")
                             .addCheckbox("Don't show again", (ev) => {
                                 const target = ev.target as HTMLInputElement
-                                console.log("don't show again called", target.checked)
+                                this.log.experiment("don't show again called", target.checked)
                             })
                             .setCta("mod-warning", "Yes")
                             .prompt()
@@ -219,11 +242,11 @@ export default class ObsidianCollabPlugin extends Plugin {
         // If the plugin hooks up any global DOM events (on parts of the app that doesn"t belong to this plugin)
         // Using this function will automatically remove the event listener when this plugin is disabled.
         //this.registerDomEvent(document, "click", (evt: MouseEvent) => {
-        //	console.log("click", evt);
+        //	this.log.experiment("click", evt);
         //});
 
         // When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-        //this.registerInterval(window.setInterval(() => console.log("setInterval"), 5 * 60 * 1000));
+        //this.registerInterval(window.setInterval(() => this.log.experiment("setInterval"), 5 * 60 * 1000));
 
         // listen to file creations, deletions and changes for sending to the server
         // This needs to be done after app is loaded as it is also called while all files are loaded
@@ -238,18 +261,18 @@ export default class ObsidianCollabPlugin extends Plugin {
         this.lastEditor = undefined;
 
         this.app.workspace.on("active-leaf-change", (leaf) => {
-            //console.log("active-leaf-change:", leaf);
+            //this.log.experiment("active-leaf-change:", leaf);
         });
 
         // This creates an icon in the left ribbon.
         const ribbonIconEl = this.addRibbonIcon("dice", "Sample Plugin", (evt: MouseEvent) => {
             // Called when the user clicks the icon.
             //new Notice("This is a notice!");
-            console.log("\nleavesa:")
+            this.log.experiment("\nleavesa:")
             this.app.workspace.iterateRootLeaves((leaf) => {
-                console.log(leaf);
+                this.log.experiment(leaf);
             });
-            //console.log(this.);
+            //this.log.experiment(this.);
         });
         // Perform additional things with the ribbon
         ribbonIconEl.addClass("my-plugin-ribbon-class");
@@ -272,11 +295,11 @@ export default class ObsidianCollabPlugin extends Plugin {
 
         //const doc = new Y.Doc()
         //doc.on("update", (arg0, arg1, arg2) => {
-        //    console.warn("doc update: ", arg0, arg1, arg2);
+        //    this.log.experiment("doc update: ", arg0, arg1, arg2);
         //});
         //const ytext = doc.getText("codemirror")
         //ytext.observe((a) => {
-        //    console.log("new val: ", ytext.toString());
+        //    this.log.experiment("new val: ", ytext.toString());
         //});
 
         //const provider = new WebsocketProvider("ws://hetzner2.ecbb.cc:12345", "my-room", doc, { disableBc: true })
@@ -327,20 +350,20 @@ export default class ObsidianCollabPlugin extends Plugin {
     }
 
     onCreate(file: TAbstractFile) {
-        console.log("create:", file);
+        this.log.debug("create:", file);
     }
     onDelete(file: TAbstractFile) {
-        console.log("delete:", file);
+        this.log.debug("delete:", file);
     }
     onModify(file: TAbstractFile) {
-        console.log("modify:", file);
+        this.log.debug("modify:", file);
     }
     onRename(file: TAbstractFile, old_path: string) {
-        console.log(`rename "${old_path}"->"${file.path}":`, file);
+        this.log.debug(`rename "${old_path}"->"${file.path}":`, file);
     }
 
     onExternalSettingsChange() {
-        console.log("external settings change")
+        this.log.debug("external settings change")
         // TODO: figure out why this isn't called 
         this.settings.reload()
     }
