@@ -51,7 +51,7 @@ export class Connection {
 
     constructor(
         private log: Logger,
-        private url: string
+        public url: URL
     ) {
         this.state = ref(ConnectionState.Disconnected)
         effect(() => {

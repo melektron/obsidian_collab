@@ -53,9 +53,11 @@ export default class ObsidianCollabPlugin extends Plugin {
         ))
         
         // application components
+        
         this.connection = new Connection(
             this.log.child("conn"),
-            this.settings.data.serverUrl
+            // for now we just use a single connection with a stored server URL
+            new URL(this.settings.data.serverUrl)
         ) // TODO: make handle this differently to react to settings changes
         this.docManager = new DocManager(
             this.log.child("docmgr"),
@@ -109,15 +111,34 @@ export default class ObsidianCollabPlugin extends Plugin {
                     return
                 } else if (file instanceof TFile) {
                     if (file.extension != "md") return;
-                    menu.addItem((item) => {
-                        item
-                            .setTitle("Share with Collab")
-                            .setIcon("document")
-                            .onClick(async () => {
-                                // TODO: implement the functionality to add to mountpoint index and save that in config.
-                                new Notice(file.path);
-                            });
-                    });
+
+                    // TODO: in the future we must differentiate between whether an item is the root of a shared
+                    // folder or just a node under a shared folder
+                    const isShared = this.docManager.checkTextDocument(file.path);
+
+                    // md files that are not yet shared get the option to share them
+                    if (!isShared) {
+                        menu.addItem((item) => {
+                            item
+                                .setTitle("Share with Collab")
+                                .setIcon("user-plus")
+                                .onClick(async () => {
+                                    this.docManager.shareNewDocument(file)
+                                    new Notice(`Sharing ${file.path}`)
+                                });
+                        });
+                    } else {
+                        // md files that are already shared can be unshared
+                        menu.addItem((item) => {
+                            item
+                                .setTitle("Stop Sharing")
+                                .setIcon("cloud-off" /*"user-minus"*/)
+                                .onClick(async () => {
+                                    this.docManager.unshareDocument(file)
+                                    new Notice(`Unsharing ${file.path}`)
+                                });
+                        });
+                    }
                     // TODO: Add menu items to stop sharing and so on, possibly with modal to ask whether to also delete
                     // (should delete from server also be possible? that wouldn't be properly authenticated atm... meaning
                     // everyone could delete... probably a feature for later once auth works)

@@ -1,8 +1,8 @@
 {
-	"id": "obsidian-collab",
+	"id": "collab",
 	"name": "Collab",
 	"version": "0.1.0",
-	"minAppVersion": "0.15.0",
+	"minAppVersion": "1.13.0",
 	"description": "Sync folders across devices and collaborate with colleges in real-time.",
 	"author": "melektron",
 	"authorUrl": "https://github.com/melektron/",

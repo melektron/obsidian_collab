@@ -108,7 +108,10 @@ For error variant, it is provided by default in button.mod-destructive
     container-type: inline-size;
 }
 .collab-mountpoint-entry {
+    display: flex;
     border-top: var(--border-width) solid var(--background-modifier-border);
+    padding-inline: var(--size-4-4);
+    padding-block: var(--size-4-2);
 }
 .collab-mountpoint-entry:first-child {
     border-top: none;

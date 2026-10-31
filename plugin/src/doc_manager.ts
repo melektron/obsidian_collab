@@ -11,7 +11,7 @@ import * as Y from "yjs"
 import { IndexeddbPersistence } from "y-indexeddb"
 import * as cm_state from '@codemirror/state' // eslint-disable-line
 import { MapKey, ValueMap } from "./utils/valuemap"
-import { App } from "obsidian"
+import { App, TFile } from "obsidian"
 import { Connection, ConnectionState } from "./networking/connection"
 import { AnyUint8Array } from "./networking/proto_shared"
 import { EventChannel, Listener } from "./utils/event_channel"
@@ -21,7 +21,7 @@ import { SettingsManager } from "./settings"
 import { effect } from "@vue/reactivity"
 import { Logger } from "./utils/logger"
 
-export type UUID = string
+export type UUID = `${string}-${string}-${string}-${string}-${string}`
 
 /**
  * object to identify and locate a document globally
@@ -31,6 +31,12 @@ export class DocumentIdentifier extends MapKey {
         readonly uuid: UUID,
         readonly server: URL
     ) { super() }
+
+    static createRandomFor(server: URL) {
+        return new this(
+            window.crypto.randomUUID(), server
+        )
+    }
 }
 
 export type DocHandle = number
@@ -76,7 +82,7 @@ export class Document {
         protected readonly log: Logger,
         readonly app: App,
         readonly connection: Connection,
-        readonly uuid: string,
+        readonly uuid: UUID,
     ) {
         // create new document
         this.crdtDoc = new Y.Doc()  // TODO: use server specified client ID
@@ -257,7 +263,7 @@ export class TextDocument extends Document {
         log: Logger,
         app: App,
         connection: Connection,
-        uuid: string,
+        uuid: UUID,
     ) {
         super(log, app, connection, uuid)
         this.textType = this.crdtDoc.getText("text-file-content")
@@ -325,7 +331,7 @@ export class DocManager {
         this.mountpointIndex = new Map(
             this.settings.data.mountPoints.map(mp => [
                 mp.path, 
-                new DocumentIdentifier(mp.doc, new URL(this.settings.data.serverUrl))
+                new DocumentIdentifier(mp.doc as UUID /* this is zod-guaranteed */, new URL(this.settings.data.serverUrl))
             ])
         )
 
@@ -402,6 +408,41 @@ export class DocManager {
         this.log.debug("destroying document", docId)
         doc.destroy()
         this.activeDocs.delete(docId)
+    }
+
+    /**
+     * Adds a new file to the mountpoint table and assigns
+     * it a new UUID, creating a new shared document.
+     * @param file file to share
+     */
+    shareNewDocument(file: TFile) {
+        const docId = DocumentIdentifier.createRandomFor(this.connection.url)
+        this.settings.update((cfg) => {
+            cfg.mountPoints.push({
+                path: file.path,
+                doc: docId.uuid
+            })
+        })
+
+        // TODO: show share link somehow to user
+    }
+
+    /**
+     * removes the document from the mountpoint index.
+     * @param file 
+     */
+    unshareDocument(file: TFile) {
+        // TODO: ask user if they also want to delete it from the server.
+
+        this.settings.update((cfg) => {
+            const value = cfg.mountPoints.find(v => v.path === file.path)
+            if (!value) {
+                this.log.warn("Tried to remove missing item from mountpoint index. This could mean data corruption.")
+                return
+            }
+            cfg.mountPoints.remove(value)
+        })
+
     }
 }
 
